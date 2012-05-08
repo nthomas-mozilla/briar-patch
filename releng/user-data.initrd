@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+while true; do
+    if ( curl -s -f -o /etc/aws-user-data http://169.254.169.254/latest/user-data ); then
+        break
+    fi
+    sleep 10
+done
+
+chmod 644 /etc/aws-user-data
+
+. /etc/aws-user-data
+
+# Make sure we talk to the right puppet server
+sed -i "s/^.*PUPPET_SERVER.*/PUPPET_SERVER=$PUPPET_SERVER/" /etc/sysconfig/puppet
