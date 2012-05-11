@@ -82,6 +82,7 @@ BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
             instance_type=config['instance_type'],
             block_device_map=bdm,
             client_token=token,
+            subnet_id=config.get('subnet_id'),
             )
 
     instance = reservation.instances[0]
@@ -102,7 +103,10 @@ BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
     instance.add_tag('moz-state', 'assimilating')
     while True:
         try:
-            assimilate(instance.public_dns_name, config)
+            if instance.subnet_id:
+                assimilate(instance.private_ip_address, config)
+            else:
+                assimilate(instance.public_dns_name, config)
             break
         except:
             log.exception("problem assimilating %s", instance)
@@ -111,6 +115,7 @@ BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
 
 def make_instances(names, options, config):
     """Create instances for each name of names for the given configuration"""
+    # TODO: parallelize
     for name in names:
         create_instance(name, options, config)
 
@@ -119,6 +124,8 @@ configs =  {
     "rhel6-mock": {
         "us-west-1": {
             "ami": "ami-250e5060", # RHEL-6.2-Starter-EBS-x86_64-4-Hourly2
+            "subnet_id": "subnet-59e94330",
+            "security_group_ids": [],
             "instance_type": "c1.xlarge",
             "key_name": "linux-test-west",
             "device_map": {
