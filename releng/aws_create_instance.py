@@ -10,20 +10,23 @@ from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 import logging
 log = logging.getLogger()
 
-def assimilate(hostname, config):
+def assimilate(ip_addr, config, instance_data):
     """Assimilate hostname into our collective
 
     What this means is that hostname will be set up with some basic things like
     a script to grab AWS user data, and get it talking to puppet (which is
     specified in said config).
     """
-    env.host_string = hostname
+    env.host_string = ip_addr
     env.user = 'root'
     env.abort_on_prompts = True
     env.disable_known_hosts = True
 
     # Sanity check
     run("date")
+
+    # Set our hostname
+    run("hostname {hostname}".format(**instance_data))
 
     # Resize the file systems
     # We do this because the AMI image usually has a smaller filesystem than
@@ -32,21 +35,20 @@ def assimilate(hostname, config):
         for mapping in config['device_map'].values():
             run('resize2fs {dev}'.format(dev=mapping['instance_dev']))
 
+    # Set up /etc/hosts to talk to 'puppet'
+    run('echo "127.0.0.1 localhost.localdomain localhost\n::1 localhost6.localdomain6 localhost6\n{puppet_ip} puppet\n" > /etc/hosts'.format(**instance_data))
+
+    # Set up yum repos
+    run('rm /etc/yum.repos.d/*')
+    put('releng-public.repo', '/etc/yum.repos.d/releng-public.repo')
+    run('yum clean all')
+    run('yum install -q -y puppet')
+
     # Get puppet installed
-    run('rpm -q --info puppetlabs-release || rpm -U http://yum.puppetlabs.com/el/6/products/x86_64/puppetlabs-release-6-1.noarch.rpm')
-    run('rpm -q --info puppet || yum install -q -y puppet')
-    run('/etc/init.d/puppet stop')
-
-    # Set up user-data thing
-    put('user-data.initrd', '/etc/init.d/aws-user-data', mode=0755)
-    run('ln -sf /etc/init.d/aws-user-data /etc/rc3.d/S90aws-user-data')
-    run('/etc/init.d/aws-user-data')
-
-    # Run puppet
-    run("source /etc/aws-user-data && puppetd --server $PUPPET_SERVER --onetime --no-daemonize --verbose --waitforcert 10")
+    run("puppetd --server puppet --onetime --no-daemonize --verbose --waitforcert 10")
 
     # Set up a stub buildbot.tac
-    sudo("source /etc/aws-user-data && /tools/buildbot/bin/buildslave create-slave /builds/slave $BUILDBOT_MASTER $SLAVE_NAME $SLAVE_PASS", user="cltbld")
+    sudo("/tools/buildbot/bin/buildslave create-slave /builds/slave {buildbot_master} {name} {buildslave_password}".format(**instance_data), user="cltbld")
 
     # Start buildbot
     run("/etc/init.d/buildbot start")
@@ -62,12 +64,13 @@ def create_instance(name, options, config):
     # Make sure we don't request the same things twice
     token = str(uuid.uuid4())[:16]
 
-    user_data = """\
-PUPPET_SERVER=ec2-184-169-157-185.us-west-1.compute.amazonaws.com
-SLAVE_NAME={name}
-SLAVE_PASS=pass
-BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
-""".format(name=name)
+    instance_data = {
+            'puppet_ip': '10.130.168.205',
+            'name': name,
+            'buildbot_master': '10.26.48.43:9049',
+            'buildslave_password': 'pass',
+            'hostname': '{name}.releng.aws-{region}.mozilla.com'.format(name=name, region=options.region),
+            }
 
     bdm = None
     if 'device_map' in config:
@@ -78,7 +81,6 @@ BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
     reservation = conn.run_instances(
             image_id=config['ami'],
             key_name=config['key_name'],
-            user_data=user_data,
             instance_type=config['instance_type'],
             block_device_map=bdm,
             client_token=token,
@@ -104,20 +106,44 @@ BUILDBOT_MASTER=ip-10-160-145-93.us-west-1.compute.internal
     while True:
         try:
             if instance.subnet_id:
-                assimilate(instance.private_ip_address, config)
+                assimilate(instance.private_ip_address, config, instance_data)
             else:
-                assimilate(instance.public_dns_name, config)
+                assimilate(instance.public_dns_name, config, instance_data)
             break
         except:
             log.exception("problem assimilating %s", instance)
             time.sleep(10)
     instance.add_tag('moz-state', 'running')
 
+import multiprocessing
+import sys
+
+class LoggingProcess(multiprocessing.Process):
+    def __init__(self, log, *args, **kwargs):
+        self.log = log
+        super(LoggingProcess, self).__init__(*args, **kwargs)
+
+    def run(self):
+        output = open(self.log, 'wb', 0)
+        logging.basicConfig(stream=output)
+        sys.stdout = output
+        sys.stderr = output
+        return super(LoggingProcess, self).run()
+
 def make_instances(names, options, config):
     """Create instances for each name of names for the given configuration"""
-    # TODO: parallelize
+    procs = []
     for name in names:
-        create_instance(name, options, config)
+        p = LoggingProcess(log="{name}.log".format(name=name),
+                           target=create_instance,
+                           args=(name, options, config),
+                           )
+        p.start()
+        procs.append(p)
+
+    log.info("waiting for workers")
+    for p in procs:
+        p.join()
 
 # TODO: Move this into separate file(s)
 configs =  {
