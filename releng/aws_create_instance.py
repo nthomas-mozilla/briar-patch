@@ -3,7 +3,7 @@ import json
 import uuid
 import time
 
-from fabric.api import run, put, env, sudo
+from fabric.api import run, put, env, sudo, settings
 from boto.ec2 import connect_to_region
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 
@@ -42,10 +42,16 @@ def assimilate(ip_addr, config, instance_data):
     run('rm /etc/yum.repos.d/*')
     put('releng-public.repo', '/etc/yum.repos.d/releng-public.repo')
     run('yum clean all')
-    run('yum install -q -y puppet')
 
     # Get puppet installed
-    run("puppetd --server puppet --onetime --no-daemonize --verbose --waitforcert 10")
+    run('yum install -q -y puppet')
+
+    # Run puppet
+    # We need --detailed-exitcodes here otherwise puppet will return 0
+    # sometimes when it fails to install dependencies
+    with settings(warn_only=True):
+        result = run("puppetd --server puppet --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
+        assert result.return_code in (0,2)
 
     # Set up a stub buildbot.tac
     sudo("/tools/buildbot/bin/buildslave create-slave /builds/slave {buildbot_master} {name} {buildslave_password}".format(**instance_data), user="cltbld")
@@ -65,7 +71,7 @@ def create_instance(name, options, config):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.168.205',
+            'puppet_ip': '10.130.57.214',
             'name': name,
             'buildbot_master': '10.26.48.43:9049',
             'buildslave_password': 'pass',
@@ -76,7 +82,7 @@ def create_instance(name, options, config):
     if 'device_map' in config:
         bdm = BlockDeviceMapping()
         for device, device_info in config['device_map'].items():
-            bdm[device] = BlockDeviceType(size=device_info['size'])
+            bdm[device] = BlockDeviceType(size=device_info['size'], delete_on_termination=True)
 
     reservation = conn.run_instances(
             image_id=config['ami'],
