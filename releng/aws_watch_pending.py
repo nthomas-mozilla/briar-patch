@@ -22,6 +22,9 @@ log = logging.getLogger()
 builder_map = {
         "Android (Debug )?mozilla-inbound build": "rhel6-mock",
         "b2g fedora16-i386 mozilla-inbound build": "rhel6-mock",
+        "b2g fedora16-i386 mozilla-inbound build": "rhel6-mock",
+        "Linux (x86-64 )?mozilla-inbound (leak test )?build": "rhel6-mock",
+        "Linux (x86-64 )?mozilla-inbound pgo-build": "rhel6-mock",
         }
 
 max_instances = {
@@ -50,7 +53,10 @@ def aws_resume_instances(instance_type, count, regions, secrets):
     started = 0
     for region in regions:
         conn = boto.ec2.connect_to_region(region, **secrets)
-        reservations = conn.get_all_instances()
+        reservations = conn.get_all_instances(filters={
+            'tag:moz-type': instance_type,
+            'instance-state-name': 'stopped',
+            })
         for r in reservations:
             for i in r.instances:
                 if not i.tags.get('moz-type') == instance_type:
@@ -77,7 +83,7 @@ def aws_create_instances(instance_type, count, regions, secrets):
     names = []
     for region in regions:
         conn = boto.ec2.connect_to_region(region, **secrets)
-        reservations = conn.get_all_instances()
+        reservations = conn.get_all_instances(filters={'tag:moz-type': instance_type})
         for r in reservations:
             for i in r.instances:
                 if i.tags.get('moz-type') == instance_type:
@@ -121,7 +127,6 @@ def aws_watch_pending(db, regions, secrets):
                 break
         else:
             log.debug("%s has %i pending jobs, but no instance types defined", pending_buildername, count)
-
 
     for instance_type, count in to_create.items():
         log.debug("Need %i %s", count, instance_type)
