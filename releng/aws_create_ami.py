@@ -1,0 +1,310 @@
+#!/usr/bin/env python
+
+from boto.ec2 import connect_to_region
+from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
+from fabric.api import run, put, env, hide, lcd
+import json
+import uuid
+import time
+import logging
+log = logging.getLogger()
+
+configs = {
+    "centos-6-x86_64-build": {
+        "us-east-1": {
+            "ami": "ami-41d00528",  # Any RHEL-6.2 AMI
+            "instance_type": "c1.xlarge",
+            "key_name": "rail-test",
+            "arch": "x86_64",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+                "ami_dev_name": "/dev/sda1",
+            },
+        },
+        "us-west-1": {
+            "ami": "ami-250e5060",  # Any RHEL-6.2 AMI
+            "instance_type": "c1.xlarge",
+            "key_name": "rail-test",
+            "arch": "x86_64",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+                "ami_dev_name": "/dev/sda1",
+           },
+        }
+    },
+    "centos-6-i386-build": {
+        "us-east-1": {
+            "ami": "ami-cdd306a4",  # Any RHEL-6. i386 AMI
+            "instance_type": "m1.medium",
+            "key_name": "rail-test",
+            "arch": "i386",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+                "ami_dev_name": "/dev/sda1",
+            },
+        },
+        "us-west-1": {
+            "ami": "ami-e50e50a0",
+            "instance_type": "m1.medium",
+            "key_name": "rail-test",
+            "arch": "i386",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+                "ami_dev_name": "/dev/sda1",
+           },
+        }
+    },
+}
+
+
+def create_connection(options):
+    secrets = json.load(open(options.secrets))
+    connection = connect_to_region(
+        options.region,
+        aws_access_key_id=secrets['aws_access_key_id'],
+        aws_secret_access_key=secrets['aws_secret_access_key'],
+    )
+    return connection
+
+
+def create_instance(connection, instance_name, config):
+
+    bdm = None
+    if 'device_map' in config:
+        bdm = BlockDeviceMapping()
+        for device, device_info in config['device_map'].items():
+            bdm[device] = BlockDeviceType(size=device_info['size'],
+                                          delete_on_termination=True)
+
+    reservation = connection.run_instances(
+        image_id=config['ami'],
+        key_name=config['key_name'],
+        instance_type=config['instance_type'],
+        block_device_map=bdm,
+        client_token=str(uuid.uuid4())[:16],
+    )
+
+    instance = reservation.instances[0]
+    log.info("instance %s created, waiting to come up", instance)
+    # Wait for the instance to come up
+    while True:
+        try:
+            instance.update()
+            if instance.state == 'running':
+                env.host_string = instance.public_dns_name
+                env.user = 'root'
+                env.abort_on_prompts = True
+                env.disable_known_hosts = True
+                if run('date').succeeded:
+                    break
+        except:
+            log.debug('hit error waiting for instance to come up')
+        time.sleep(10)
+    instance.add_tag('Name', instance_name)
+    return instance
+
+
+def create_ami(connection, options, config, host_instance):
+    # TODO: use mozilla yum repos
+    # TODO: swap?
+    # TODO: factor status checks
+    env.host_string = host_instance.public_dns_name
+    env.user = 'root'
+    env.abort_on_prompts = True
+    env.disable_known_hosts = True
+
+    target_name = options.config
+    int_dev_name = config['target']['int_dev_name']
+    mount_point = config['target']['mount_point']
+
+    v = connection.create_volume(config['target']['size'],
+                                 host_instance.placement)
+    v.attach(host_instance.id, config['target']['aws_dev_name'])
+
+    while True:
+        try:
+            v.update()
+            if v.status == 'in-use':
+                if run('ls %s' % int_dev_name).succeeded:
+                    break
+        except:
+            log.debug('hit error waiting for volume to be attached')
+            time.sleep(10)
+
+    # Step 1: prepare target FS
+    run('/sbin/mkfs.{fs_type} {dev}'.format(
+        fs_type=config['target']['fs_type'],
+        dev=int_dev_name))
+    run('/sbin/e2label {dev} {label}'.format(
+        dev=int_dev_name, label=config['target']['e2_label']))
+    run('mount {dev} {mount_point}'.format(dev=int_dev_name,
+                                           mount_point=mount_point))
+    run('mkdir {0}/dev {0}/proc {0}/etc'.format(mount_point))
+    run('mount -t proc none %s/proc' % mount_point)
+    run('for i in console null zero ; '
+        'do /sbin/MAKEDEV -d %s/dev -x $i ; done' \
+        % mount_point)
+
+    # Step 2: install base system
+    with lcd(target_name):
+        put('etc/yum-local.cfg', '%s/etc/yum-local.cfg' % mount_point)
+    yum = 'yum -c {0}/etc/yum-local.cfg -y --installroot={0} '.format(
+        mount_point)
+    run('%s groupinstall Base' % yum)
+    run('%s install dhclient' % yum)
+    run('%s install openssh-server' % yum)
+    run('%s clean packages' % yum)
+
+    # Step 3: upload custom configuration files
+    with lcd(target_name):
+        for f in ('etc/rc.local', 'etc/fstab', 'etc/hosts',
+                  'etc/sysconfig/network',
+                  'etc/sysconfig/network-scripts/ifcfg-eth0',
+                  'boot/grub/grub.conf'):
+            put(f, '%s/%s' % (mount_point, f), mirror_local_mode=True)
+
+    # Step 4: tune configs
+    run('sed -i -e s/@ROOT_DEV_LABEL@/{label}/g -e s/@FS_TYPE@/{fs}/g '
+        '{mnt}/etc/fstab'.format(label=config['target']['e2_label'],
+                                 fs=config['target']['fs_type'],
+                                 mnt=mount_point))
+    run('ln -s grub.conf %s/boot/grub/menu.lst' % mount_point)
+    run('ln -s ../boot/grub/grub.conf %s/etc/grub.conf' % mount_point)
+    run('sed -i s/@VERSION@/`chroot %s rpm -q '
+        '--queryformat "%%{version}-%%{release}.%%{arch}" '
+        'kernel | tail -n1`/g %s/boot/grub/grub.conf' % (mount_point,
+                                                         mount_point))
+    run('echo "UseDNS no" >> %s/etc/ssh/sshd_config' % mount_point)
+    run('echo "PermitRootLogin without-password" >> %s/etc/ssh/sshd_config' \
+        % mount_point)
+
+    run('chroot %s chkconfig --level 2345 network on' % mount_point)
+
+    run('umount %s/proc' % mount_point)
+    run('umount %s' % mount_point)
+
+    v.detach()
+    while True:
+        try:
+            v.update()
+            if v.status == 'available':
+                break
+        except:
+            log.exception('hit error waiting for volume to be detached')
+            time.sleep(10)
+
+    # Step 5: Create a snapshot
+    log.info('Creating a snapshot')
+    snapshot = v.create_snapshot('EBS-backed %s' % options.config)
+    while True:
+        try:
+            snapshot.update()
+            if snapshot.status == 'completed':
+                break
+        except:
+            log.exception('hit error waiting for snapshot to be taken')
+            time.sleep(10)
+
+    # Step 6: Create an AMI
+    log.info('Creating AMI')
+    block_map = BlockDeviceMapping()
+    block_map[config['target']['ami_dev_name']] = BlockDeviceType(
+        snapshot_id=snapshot.id)
+    host_img = connection.get_image(config['ami'])
+    ami_id = connection.register_image(
+        options.config,
+        '%s EBS AMI' % options.config,
+        architecture=config['arch'],
+        kernel_id=host_img.kernel_id,
+        ramdisk_id=host_img.ramdisk_id,
+        root_device_name=config['target']['ami_dev_name'],
+        block_device_map=block_map,
+    )
+    ami = connection.get_image(ami_id)
+    log.info('AMI created')
+    log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
+
+    # Step 7: Cleanup
+    if not options.keep_volume:
+        log.info('Deleting volume')
+        v.delete()
+    if not options.keep_host_instance:
+        log.info('Terminating host instance')
+        host_instance.terminate()
+
+    return ami
+
+
+if __name__ == '__main__':
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.set_defaults(
+            config=None,
+            region="us-east-1",
+            secrets=None,
+            action="create",
+            )
+    parser.add_option("-c", "--config", dest="config",
+                      help="instance configuration to use")
+    parser.add_option("-r", "--region", dest="region", help="region to use")
+    parser.add_option("-k", "--secrets", dest="secrets",
+                      help="file where secrets can be found")
+    parser.add_option("-l", "--list", dest="action", action="store_const",
+                      const="list", help="list available configs")
+    parser.add_option('--keep-volume', dest='keep_volume', action='store_true',
+                      default=False, help="Don't delete target volume")
+    parser.add_option('--keep-host-instance', dest='keep_host_instance',
+                      action='store_true', default=False,
+                      help="Don't delete host instance")    
+
+    options, args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+
+    if options.action == "list":
+        for config, regions in configs.items():
+            print config, regions.keys()
+        # All done!
+        raise SystemExit(0)
+
+    if not args:
+        parser.error("at least one instance name is required")
+
+    if not options.config:
+        parser.error("config name is required")
+
+    if not options.secrets:
+        parser.error("secrets are required")
+
+    try:
+        config = configs[options.config][options.region]
+    except KeyError:
+        parser.error('unknown configuration; run with '
+                     '--list for list of supported configs')
+
+    connection = create_connection(options)
+    host_instance = create_instance(connection=connection,
+                                    instance_name=args[0],
+                                    config=config)
+    target_ami = create_ami(connection=connection, options=options,
+                            config=config, host_instance=host_instance)
