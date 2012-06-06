@@ -2,7 +2,7 @@
 
 from boto.ec2 import connect_to_region
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
-from fabric.api import run, put, env, hide, lcd
+from fabric.api import run, put, env, lcd
 import json
 import uuid
 import time
@@ -215,7 +215,7 @@ def create_ami(connection, options, config, host_instance):
 
     # Step 5: Create a snapshot
     log.info('Creating a snapshot')
-    snapshot = v.create_snapshot('EBS-backed %s' % options.config)
+    snapshot = v.create_snapshot('EBS-backed %s' % target_name)
     while True:
         try:
             snapshot.update()
@@ -224,6 +224,7 @@ def create_ami(connection, options, config, host_instance):
         except:
             log.exception('hit error waiting for snapshot to be taken')
             time.sleep(10)
+    snapshot.add_tag('Name', target_name)
 
     # Step 6: Create an AMI
     log.info('Creating AMI')
@@ -232,8 +233,8 @@ def create_ami(connection, options, config, host_instance):
         snapshot_id=snapshot.id)
     host_img = connection.get_image(config['ami'])
     ami_id = connection.register_image(
-        options.config,
-        '%s EBS AMI' % options.config,
+        target_name,
+        '%s EBS AMI' % target_name,
         architecture=config['arch'],
         kernel_id=host_img.kernel_id,
         ramdisk_id=host_img.ramdisk_id,
@@ -241,6 +242,7 @@ def create_ami(connection, options, config, host_instance):
         block_device_map=block_map,
     )
     ami = connection.get_image(ami_id)
+    ami.add_tag('Name', target_name)
     log.info('AMI created')
     log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
 
