@@ -241,10 +241,16 @@ def create_ami(connection, options, config, host_instance):
         root_device_name=config['target']['ami_dev_name'],
         block_device_map=block_map,
     )
-    ami = connection.get_image(ami_id)
-    ami.add_tag('Name', target_name)
-    log.info('AMI created')
-    log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
+    while True:
+        try:
+            ami = connection.get_image(ami_id)
+            ami.add_tag('Name', target_name)
+            log.info('AMI created')
+            log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
+            break
+        except boto.exception.EC2ResponseError:
+            log.info('Wating for AMI')
+            time.sleep(10)
 
     # Step 7: Cleanup
     if not options.keep_volume:
