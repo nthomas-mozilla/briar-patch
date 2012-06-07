@@ -211,4 +211,4 @@ if __name__ == '__main__':
         parser.error("unknown configuration; run with --list for list of supported configs")
 
     secrets = json.load(open(options.secrets))
-    make_instances(args, config_name, options.region, secrets)
+    make_instances(args, options.config, options.region, secrets)
