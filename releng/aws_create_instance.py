@@ -170,6 +170,22 @@ configs =  {
             },
         },
     },
+    "centos-6-x86_64-build": {
+        "us-west-1": {
+            "type": "centos-6-x86_64-build",
+            "ami": "ami-ffbce6ba",
+            "subnet_id": "subnet-59e94330",
+            "security_group_ids": [],
+            "instance_type": "c1.xlarge",
+            "key_name": "rail-test",
+            "device_map": {
+                "/dev/sda1": {
+                    "size": 50,
+                    "instance_dev": "/dev/xvde1",
+                },
+            },
+        },
+    },
 }
 
 if __name__ == '__main__':
