@@ -10,7 +10,7 @@ import logging
 log = logging.getLogger()
 
 configs = {
-    "centos-6-x86_64-build": {
+    "centos-6-x86_64-base": {
         "us-east-1": {
             "ami": "ami-41d00528",  # Any RHEL-6.2 AMI
             "instance_type": "c1.xlarge",
@@ -42,7 +42,7 @@ configs = {
            },
         }
     },
-    "centos-6-i386-build": {
+    "centos-6-i386-base": {
         "us-east-1": {
             "ami": "ami-cdd306a4",  # Any RHEL-6. i386 AMI
             "instance_type": "m1.medium",
