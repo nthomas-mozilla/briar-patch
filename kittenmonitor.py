@@ -41,6 +41,8 @@ import email.utils
 from email.mime.text import MIMEText
 from datetime import date, datetime, timedelta
 
+from boto.ec2 import connect_to_region
+
 from releng import initOptions, initLogs, dbRedis
 
 log = logging.getLogger()
@@ -281,6 +283,70 @@ def sendAlertEmail(alerts, options):
     server.sendmail(addr, [addr], msg.as_string())
     server.quit()
 
+def awsUpdate(options):
+    secrets = json.load(open(options.secrets))
+    conn = connect_to_region(options.region,
+        aws_access_key_id=secrets['aws_access_key_id'],
+        aws_secret_access_key=secrets['aws_secret_access_key'],
+    )
+
+    if conn is not None:
+        reservations = conn.get_all_instances()
+
+        current = {}
+        for reservation in reservations:
+            for instance in reservation.instances:
+                if 'moz-state' in instance.tags:
+                    dNow = datetime.now()
+                    ts   = dNow.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+                    currStatus = { 'state':        instance.state,
+                                   'id':           instance.id,
+                                   'timestamp':    ts,
+                                   'farm':         'ec2',
+                                   'image_id':     instance.image_id,
+                                   'vpc_id':       instance.vpc_id,
+                                   'platform':     instance.platform,
+                                   'region':       instance.region.name,
+                                   'launchTime':   instance.launch_time,
+                                   'instanceType': instance.instance_type,
+                                   'ipPrivate':    instance.private_ip_address,
+                                   }
+                    for tag in instance.tags.keys():
+                        currStatus[tag] = instance.tags[tag]
+
+                    key = 'instance:%s:%s' % (currStatus['Name'], currStatus['id'])
+                    farm = 'farm:%s' % currStatus['farm']
+
+                    db.sadd(farm, key)
+                    if farm not in current:
+                        current[farm] = []
+                    current[farm].append(key)
+
+                    print key, farm, currStatus['moz-state']
+
+                    if currStatus['state'] == 'running':
+                        db.sadd('%s:active'   % farm, key)
+                        db.srem('%s:inactive' % farm, key)
+                    else:
+                        db.sadd('%s:inactive' % farm, key)
+                        db.srem('%s:active'   % farm, key)
+
+                    prevStatus = db.hgetall(key)
+
+                    pipe = db._redis.pipeline()
+                    if len(prevStatus) > 0:
+                        pipe.rpush('%s:history' % key, prevStatus)
+                        pipe.ltrim('%s:history' % key, 0, 300)
+                    for tag in currStatus:
+                        pipe.hset(key, tag, currStatus[tag])
+                    pipe.execute()
+        for farm in current.keys():
+            for key in db.smembers('%s:active' % farm):
+                if key not in current[farm]:
+                    db.sadd('%s:inactive' % farm, key)
+                    db.srem('%s:active'   % farm, key)
+
 
 
 _defaultOptions = { 'config':  ('-c', '--config',  None,             'Configuration file'),
@@ -289,7 +355,8 @@ _defaultOptions = { 'config':  ('-c', '--config',  None,             'Configurat
                     'redis':   ('-r', '--redis',   'localhost:6379', 'Redis connection string'),
                     'redisdb': ('',   '--redisdb', '8',              'Redis database'),
                     'email':   ('-e', '--email',   False,            'send result email', 'b'),
-                  }
+                    'region':  ('',   '--region' , 'us-west-1',      'EC2 Region'),
+                    }
 
 if __name__ == '__main__':
     options = initOptions(params=_defaultOptions)
@@ -298,6 +365,8 @@ if __name__ == '__main__':
     log.info('Starting')
 
     db = dbRedis(options)
+
+    awsUpdate(options)
 
     tdHour  = timedelta(hours=-1)
     dGather = datetime.now()

@@ -39,7 +39,7 @@ def assimilate(ip_addr, config, instance_data):
     run('echo "127.0.0.1 localhost.localdomain localhost\n::1 localhost6.localdomain6 localhost6\n{puppet_ip} puppet\n" > /etc/hosts'.format(**instance_data))
 
     # Set up yum repos
-    run('rm /etc/yum.repos.d/*')
+    run('rm -f /etc/yum.repos.d/*')
     put('releng-public.repo', '/etc/yum.repos.d/releng-public.repo')
     run('yum clean all')
 
@@ -59,10 +59,9 @@ def assimilate(ip_addr, config, instance_data):
     # Start buildbot
     run("/etc/init.d/buildbot start")
 
-def create_instance(name, options, config):
+def create_instance(name, config, region, secrets):
     """Creates an AMI instance with the given name and config. The config must specify things like ami id."""
-    secrets = json.load(open(options.secrets))
-    conn = connect_to_region(options.region,
+    conn = connect_to_region(region,
             aws_access_key_id=secrets['aws_access_key_id'],
             aws_secret_access_key=secrets['aws_secret_access_key'],
             )
@@ -71,11 +70,11 @@ def create_instance(name, options, config):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.57.214',
+            'puppet_ip': '10.130.236.242',
             'name': name,
-            'buildbot_master': '10.26.48.43:9049',
+            'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
-            'hostname': '{name}.releng.aws-{region}.mozilla.com'.format(name=name, region=options.region),
+            'hostname': '{name}.releng.aws-{region}.mozilla.com'.format(name=name, region=region),
             }
 
     bdm = None
@@ -106,9 +105,10 @@ def create_instance(name, options, config):
         time.sleep(10)
 
     instance.add_tag('Name', name)
+    instance.add_tag('moz-type', config['type'])
 
     log.info("assimilating %s", instance)
-    instance.add_tag('moz-state', 'assimilating')
+    instance.add_tag('moz-state', 'pending')
     while True:
         try:
             if instance.subnet_id:
@@ -119,7 +119,7 @@ def create_instance(name, options, config):
         except:
             log.exception("problem assimilating %s", instance)
             time.sleep(10)
-    instance.add_tag('moz-state', 'running')
+    instance.add_tag('moz-state', 'ready')
 
 import multiprocessing
 import sys
@@ -136,13 +136,14 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, options, config):
+def make_instances(names, config_name, region, secrets):
     """Create instances for each name of names for the given configuration"""
     procs = []
+    config = configs[config_name][region]
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
-                           args=(name, options, config),
+                           args=(name, config, region, secrets),
                            )
         p.start()
         procs.append(p)
@@ -155,6 +156,7 @@ def make_instances(names, options, config):
 configs =  {
     "rhel6-mock": {
         "us-west-1": {
+            "type": "rhel6-mock",
             "ami": "ami-250e5060", # RHEL-6.2-Starter-EBS-x86_64-4-Hourly2
             "subnet_id": "subnet-59e94330",
             "security_group_ids": [],
@@ -162,7 +164,7 @@ configs =  {
             "key_name": "linux-test-west",
             "device_map": {
                 "/dev/sda1": {
-                    "size": 100,
+                    "size": 50,
                     "instance_dev": "/dev/xvde1",
                 },
             },
@@ -208,4 +210,5 @@ if __name__ == '__main__':
     except KeyError:
         parser.error("unknown configuration; run with --list for list of supported configs")
 
-    make_instances(args, options, config)
+    secrets = json.load(open(options.secrets))
+    make_instances(args, options.config, options.region, secrets)

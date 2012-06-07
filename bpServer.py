@@ -53,69 +53,14 @@ from multiprocessing import Process, Queue, current_process, get_logger, log_to_
 import zmq
 
 from releng import initOptions, initLogs, dbRedis
-from releng.constants import PORT_PULSE, ID_PULSE_WORKER, ID_METRICS_WORKER, \
-                             METRICS_COUNT, METRICS_HASH, METRICS_LIST, METRICS_SET
+from releng.metrics import Metric
+from releng.constants import PORT_PULSE, ID_PULSE_WORKER, ID_METRICS_WORKER
 
-log         = get_logger()
-jobQueue    = Queue()
-metricQueue = Queue()
+
+log      = get_logger()
+jobQueue = Queue()
 
 ARCHIVE_CHUNK = 100
-
-
-def metric(jobs, options):
-    log.info('starting')
-
-    db = dbRedis(options)
-
-    context = zmq.Context()
-    router  = context.socket(zmq.ROUTER)
-    poller  = zmq.Poller()
-    poller.register(router, zmq.POLLIN)
-
-    remoteID = None
-    sequence = 0
-
-    while True:
-        if remoteID is None:
-            for serverID in db.lrange(ID_METRICS_WORKER, 0, -1):
-                if not db.sismember('%s:inactive' % ID_METRICS_WORKER, serverID):
-                    remoteID = serverID
-                    address  = remoteID.replace('%s:' % ID_METRICS_WORKER, '')
-
-                    if ':' not in address:
-                        address = '%s:%s' % (address, PORT_PULSE)
-                    address = 'tcp://%s' % address
-
-                    log.debug('connecting to server %s' % address)
-
-                    router.connect(address)
-                    time.sleep(0.1)
-
-        try:
-            job = jobs.get(False)
-        except Empty:
-            job = None
-
-        if job is not None:
-            msg = json.dumps(job)
-            sequence += 1
-            payload   = [remoteID, str(sequence), 'job', msg]
-
-            if options.debug:
-                log.debug('send %s %d chars [%s]' % (remoteID, len(msg), msg[:42]))
-
-            router.send_multipart(payload)
-
-        try:
-            items = dict(poller.poll(100))
-        except:
-            break
-
-        if router in items:
-            reply = router.recv_multipart()
-
-    log.info('done')
 
 
 def getArchive(archivePath):
@@ -129,7 +74,7 @@ def getArchive(archivePath):
 
     return result
 
-def worker(jobs, metrics, db, archivePath):
+def worker(jobs, db, archivePath, statsdServer):
     log.info('starting')
 
     aCount  = 0
@@ -139,6 +84,8 @@ def worker(jobs, metrics, db, archivePath):
               'builduid', 'buildnumber', 'buildid', 'statusdb_id',
               'build_url', 'log_url', 'pgo_build', 'scheduler', 'who',
              )
+
+    metric = Metric(statsdServer, archivePath)
 
     while True:
         try:
@@ -158,7 +105,7 @@ def worker(jobs, metrics, db, archivePath):
 
                 log.debug('Job: %s %s %s' % (event, key, ts))
 
-                outbound = [(METRICS_COUNT, ('metrics', 'pulse'))]
+                metric.incr('pulse', 1)
 
                 if event == 'source':
                     properties = { 'revision':  None,
@@ -192,13 +139,17 @@ def worker(jobs, metrics, db, archivePath):
                     db.sadd('change:%s'    % tsDate,           changeKey)
                     db.sadd('change:%s.%s' % (tsDate, tsHour), changeKey)
 
+                    metric.incr('change', 1)
+
                 elif event == 'slave connect':
                     slave = item['slave']
-                    outbound.append((METRICS_COUNT, ('connect:slave',  slave )))
+                    metric.incr('machines.connect', 1)
+                    metric.incr('machine.connect.%s' % slave, 1)
 
                 elif event == 'slave disconnect':
                     slave = item['slave']
-                    outbound.append((METRICS_COUNT, ('disconnect:slave',  slave )))
+                    metric.incr('machines.disconnect', 1)
+                    metric.incr('machine.disconnect.%s' % slave, 1)
 
                 elif event == 'build':
                     items      = key.split('.')
@@ -223,40 +174,49 @@ def worker(jobs, metrics, db, archivePath):
                     if product in ('seamonkey',):
                         print 'skipping', product, event
                     else:
-                        tStart   = item['time']
-                        branch   = properties['branch']
-                        builduid = properties['builduid']
-                        number   = properties['buildnumber']
-                        buildKey = 'build:%s'     % builduid
-                        jobKey   = 'job:%s.%s.%s' % (builduid, master, number)
+                        tStart    = item['time']
+                        branch    = properties['branch']
+                        builduid  = properties['builduid']
+                        number    = properties['buildnumber']
+                        buildKey  = 'build:%s'     % builduid
+                        jobKey    = 'job:%s.%s.%s' % (builduid, master, number)
+                        jobResult = item['pulse']['payload']['build']['results']
 
                         db.hset(jobKey, 'slave',   slave)
                         db.hset(jobKey, 'master',  master)
-                        db.hset(jobKey, 'results', item['pulse']['payload']['build']['results'])
+                        db.hset(jobKey, 'results', jobResult)
 
                         db.lpush('build:slave:jobs:%s' % slave, jobKey)
                         db.ltrim('build:slave:jobs:%s' % slave, 0, 20)
 
-                        print jobKey, 'results', item['pulse']['payload']['build']['results']
+                        print jobKey, 'results', jobResult
 
                         for p in properties:
                             db.hset(jobKey, p, properties[p])
 
-                        outbound.append((METRICS_COUNT, ('build', buildEvent)))
+                        if 'scheduler' in properties:
+                            scheduler = properties['scheduler']
+                        else:
+                            scheduler = 'None'
+                        if 'platform' in properties:
+                            platform = properties['platform']
+                        else:
+                            platform = 'None'
+
+                            # jobs.:product.:platform.:scheduler.:master.:slave.:branch.:buildUID.results.:result
+                        statskey = '%s.%s.%s.%s.%s.%s.%s' % (product, platform, scheduler, master, slave, branch, builduid)
+
+                        if product == 'firefox':
+                            metric.incr('jobs.results.%s.%s' % (statskey, jobResult), 1)
 
                         if buildEvent == 'started':
                             db.hset(jobKey, 'started', tStart)
-
-                            outbound.append((METRICS_COUNT, ('build:started:slave',   slave  )))
-                            outbound.append((METRICS_COUNT, ('build:started:master',  master )))
-                            outbound.append((METRICS_COUNT, ('build:started:branch',  branch )))
-                            outbound.append((METRICS_COUNT, ('build:started:product', product)))
+                            if product == 'firefox':
+                                metric.incr('jobs.start.%s' % statskey, 1)
 
                         elif buildEvent == 'finished':
-                            outbound.append((METRICS_COUNT, ('build:finished:slave',   slave  )))
-                            outbound.append((METRICS_COUNT, ('build:finished:master',  master )))
-                            outbound.append((METRICS_COUNT, ('build:finished:branch',  branch )))
-                            outbound.append((METRICS_COUNT, ('build:finished:product', product)))
+                            if product == 'firefox':
+                                metric.incr('jobs.end.%s' % statskey, 1)
 
                             # if started time is found, use that for the key
                             ts = db.hget(jobKey, 'started')
@@ -270,6 +230,8 @@ def worker(jobs, metrics, db, archivePath):
 
                             db.hset(jobKey, 'finished', item['time'])
                             db.hset(jobKey, 'elapsed',  secElapsed)
+                            if product == 'firefox':
+                                metric.time('build.%s' % statskey, secElapsed)
 
                         elif buildEvent == 'log_uploaded':
                             if 'request_ids' in properties:
@@ -281,8 +243,6 @@ def worker(jobs, metrics, db, archivePath):
                         db.sadd('build:%s'    % tsDate,           buildKey)
                         db.sadd('build:%s.%s' % (tsDate, tsHour), buildKey)
                         db.sadd(buildKey, jobKey)
-
-                metrics.put(outbound)
 
             except:
                 log.error('Error converting incoming job', exc_info=True)
@@ -311,6 +271,7 @@ _defaultOptions = { 'config':      ('-c', '--config',      None,  'Configuration
                     'archivepath': ('',   '--archivepath', '.',   'Path where incoming jobs are to be archived'),
                     'redis':       ('-r', '--redis',      'localhost:6379', 'Redis connection string'),
                     'redisdb':     ('',   '--redisdb',    '8',              'Redis database'),
+                    'statsd':      ('',   '--statsd',     'localhost',      'StatsD server'),
                   }
 
 if __name__ == '__main__':
@@ -326,8 +287,7 @@ if __name__ == '__main__':
     db = dbRedis(options)
 
     log.info('Creating processes')
-    Process(name='worker', target=worker, args=(jobQueue, metricQueue, db, options.archivepath)).start()
-    Process(name='metric', target=metric, args=(metricQueue, options)).start()
+    Process(name='worker', target=worker, args=(jobQueue, db, options.archivepath, options.statsd)).start()
 
     if ':' not in options.address:
         options.address = '%s:%s' % (options.address, PORT_PULSE)
