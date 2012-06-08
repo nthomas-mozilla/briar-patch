@@ -283,7 +283,7 @@ if __name__ == '__main__':
                       default=False, help="Don't delete target volume")
     parser.add_option('--keep-host-instance', dest='keep_host_instance',
                       action='store_true', default=False,
-                      help="Don't delete host instance")    
+                      help="Don't delete host instance")
 
     options, args = parser.parse_args()
 
