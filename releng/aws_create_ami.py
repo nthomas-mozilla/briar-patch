@@ -14,7 +14,6 @@ configs = {
         "us-east-1": {
             "ami": "ami-41d00528",  # Any RHEL-6.2 AMI
             "instance_type": "c1.xlarge",
-            "key_name": "rail-test",
             "arch": "x86_64",
             "target": {
                 "size": 4,
@@ -29,7 +28,6 @@ configs = {
         "us-west-1": {
             "ami": "ami-250e5060",  # Any RHEL-6.2 AMI
             "instance_type": "c1.xlarge",
-            "key_name": "rail-test",
             "arch": "x86_64",
             "target": {
                 "size": 4,
@@ -46,7 +44,6 @@ configs = {
         "us-east-1": {
             "ami": "ami-cdd306a4",  # Any RHEL-6. i386 AMI
             "instance_type": "m1.medium",
-            "key_name": "rail-test",
             "arch": "i386",
             "target": {
                 "size": 4,
@@ -61,7 +58,6 @@ configs = {
         "us-west-1": {
             "ami": "ami-e50e50a0",
             "instance_type": "m1.medium",
-            "key_name": "rail-test",
             "arch": "i386",
             "target": {
                 "size": 4,
@@ -87,7 +83,7 @@ def create_connection(options):
     return connection
 
 
-def create_instance(connection, instance_name, config):
+def create_instance(connection, instance_name, config, key_name):
 
     bdm = None
     if 'device_map' in config:
@@ -98,7 +94,7 @@ def create_instance(connection, instance_name, config):
 
     reservation = connection.run_instances(
         image_id=config['ami'],
-        key_name=config['key_name'],
+        key_name=key_name,
         instance_type=config['instance_type'],
         block_device_map=bdm,
         client_token=str(uuid.uuid4())[:16],
@@ -267,23 +263,26 @@ if __name__ == '__main__':
     from optparse import OptionParser
     parser = OptionParser()
     parser.set_defaults(
-            config=None,
-            region="us-east-1",
-            secrets=None,
-            action="create",
-            )
+        config=None,
+        region="us-west-1",
+        secrets=None,
+        key_name=None,
+        action="create",
+        keep_volume=False,
+        keep_host_instance=False,
+    )
     parser.add_option("-c", "--config", dest="config",
                       help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets",
                       help="file where secrets can be found")
+    parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const",
                       const="list", help="list available configs")
     parser.add_option('--keep-volume', dest='keep_volume', action='store_true',
-                      default=False, help="Don't delete target volume")
+                      help="Don't delete target volume")
     parser.add_option('--keep-host-instance', dest='keep_host_instance',
-                      action='store_true', default=False,
-                      help="Don't delete host instance")
+                      action='store_true', help="Don't delete host instance")
 
     options, args = parser.parse_args()
 
@@ -304,6 +303,9 @@ if __name__ == '__main__':
     if not options.secrets:
         parser.error("secrets are required")
 
+    if not options.key_name:
+        parser.error("SSH key name name is required")
+
     try:
         config = configs[options.config][options.region]
     except KeyError:
@@ -313,6 +315,6 @@ if __name__ == '__main__':
     connection = create_connection(options)
     host_instance = create_instance(connection=connection,
                                     instance_name=args[0],
-                                    config=config)
+                                    config=config, key_name=options.key_name)
     target_ami = create_ami(connection=connection, options=options,
                             config=config, host_instance=host_instance)

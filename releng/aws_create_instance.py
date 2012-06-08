@@ -10,7 +10,7 @@ from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 import logging
 log = logging.getLogger()
 
-def assimilate(ip_addr, config, instance_data, cleanup):
+def assimilate(ip_addr, config, instance_data, create_ami):
     """Assimilate hostname into our collective
 
     What this means is that hostname will be set up with some basic things like
@@ -53,7 +53,7 @@ def assimilate(ip_addr, config, instance_data, cleanup):
         result = run("puppetd --server puppet --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
         assert result.return_code in (0,2)
 
-    if cleanup:
+    if create_ami:
         run('find /var/lib/puppet/ssl -type f -delete')
         return
 
@@ -63,7 +63,7 @@ def assimilate(ip_addr, config, instance_data, cleanup):
     # Start buildbot
     run("/etc/init.d/buildbot start")
 
-def create_instance(name, config, region, secrets, cleanup):
+def create_instance(name, config, region, secrets, key_name, create_ami=False):
     """Creates an AMI instance with the given name and config. The config must specify things like ami id."""
     conn = connect_to_region(region,
             aws_access_key_id=secrets['aws_access_key_id'],
@@ -89,7 +89,7 @@ def create_instance(name, config, region, secrets, cleanup):
 
     reservation = conn.run_instances(
             image_id=config['ami'],
-            key_name=config['key_name'],
+            key_name=key_name,
             instance_type=config['instance_type'],
             block_device_map=bdm,
             client_token=token,
@@ -116,24 +116,25 @@ def create_instance(name, config, region, secrets, cleanup):
     while True:
         try:
             if instance.subnet_id:
-                assimilate(instance.private_ip_address, config, instance_data, cleanup)
+                assimilate(instance.private_ip_address, config, instance_data, create_ami)
             else:
-                assimilate(instance.public_dns_name, config, instance_data, cleanup)
+                assimilate(instance.public_dns_name, config, instance_data, create_ami)
             break
         except:
             log.exception("problem assimilating %s", instance)
             time.sleep(10)
-    if not cleanup:
+    if not create_ami:
         instance.add_tag('moz-state', 'ready')
     else:
         ami_from_instance(instance)
 
 def ami_from_instance(instance):
     base_ami = instance.connection.get_image(instance.image_id)
-    target_name = '%s-ready' % base_ami.name
+    target_name = '%s-puppetized' % base_ami.name
     v = instance.connection.get_all_volumes(
         filters={'attachment.instance-id': instance.id})[0]
     instance.stop()
+    log.info('Stopping instance')
     while True:
         try:
             instance.update()
@@ -142,6 +143,7 @@ def ami_from_instance(instance):
         except:
             log.info('Waiting for instance stop')
             time.sleep(10)
+    log.info('Creating snapshot')
     snapshot = v.create_snapshot('EBS-backed %s' % target_name)
     while True:
         try:
@@ -157,7 +159,7 @@ def ami_from_instance(instance):
     block_map = BlockDeviceMapping()
     block_map[base_ami.root_device_name] = BlockDeviceType(
         snapshot_id=snapshot.id)
-    instance.connection.register_image(
+    ami_id = instance.connection.register_image(
         target_name,
         '%s EBS AMI' % target_name,
         architecture=base_ami.architecture,
@@ -166,6 +168,16 @@ def ami_from_instance(instance):
         root_device_name=base_ami.root_device_name,
         block_device_map=block_map,
     )
+    while True:
+        try:
+            ami = instance.connection.get_image(ami_id)
+            ami.add_tag('Name', target_name)
+            log.info('AMI created')
+            log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
+            break
+        except boto.exception.EC2ResponseError:
+            log.info('Wating for AMI')
+            time.sleep(10)
     instance.terminate()
 
 import multiprocessing
@@ -183,14 +195,15 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, config_name, region, secrets, cleanup):
+def make_instances(names, config_name, region, secrets, key_name, create_ami):
     """Create instances for each name of names for the given configuration"""
     procs = []
     config = configs[config_name][region]
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
-                           args=(name, config, region, secrets, cleanup),
+                           args=(name, config, region, secrets, key_name,
+                                 create_ami),
                            )
         p.start()
         procs.append(p)
@@ -208,23 +221,6 @@ configs =  {
             "subnet_id": "subnet-59e94330",
             "security_group_ids": [],
             "instance_type": "c1.xlarge",
-            "key_name": "linux-test-west",
-            "device_map": {
-                "/dev/sda1": {
-                    "size": 50,
-                    "instance_dev": "/dev/xvde1",
-                },
-            },
-        },
-    },
-    "centos-6-x86_64-build": {
-        "us-west-1": {
-            "type": "centos-6-x86_64-build",
-            "ami": "ami-19b6ec5c",
-            "subnet_id": "subnet-59e94330",
-            "security_group_ids": [],
-            "instance_type": "c1.xlarge",
-            "key_name": "rail-test",
             "device_map": {
                 "/dev/sda1": {
                     "size": 50,
@@ -236,14 +232,28 @@ configs =  {
     "centos-6-x86_64-base": {
         "us-west-1": {
             "type": "centos-6-x86_64-base",
-            "ami": "ami-ffbce6ba",
+            "ami": "ami-cda8f288",
             "subnet_id": "subnet-59e94330",
             "security_group_ids": [],
             "instance_type": "c1.xlarge",
-            "key_name": "rail-test",
             "device_map": {
                 "/dev/sda1": {
                     "size": 5,
+                    "instance_dev": "/dev/xvde1",
+                },
+            },
+        },
+    },
+    "centos-6-x86_64-base-puppetized": {
+        "us-west-1": {
+            "type": "centos-6-x86_64-base-puppetized",
+            "ami": "ami-83a8f2c6",
+            "subnet_id": "subnet-59e94330",
+            "security_group_ids": [],
+            "instance_type": "c1.xlarge",
+            "device_map": {
+                "/dev/sda1": {
+                    "size": 50,
                     "instance_dev": "/dev/xvde1",
                 },
             },
@@ -258,14 +268,17 @@ if __name__ == '__main__':
             config=None,
             region="us-west-1",
             secrets=None,
+            key_name=None,
             action="create",
-            cleanup=False,
+            create_ami=False,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
+    parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
-    parser.add_option("--cleanup", dest="cleanup", action="store_true", help="cleanup instance")
+    parser.add_option("--create-ami", dest="create_ami", action="store_true",
+                      help="create AMI from instance")
 
     options, args = parser.parse_args()
 
@@ -286,10 +299,14 @@ if __name__ == '__main__':
     if not options.secrets:
         parser.error("secrets are required")
 
+    if not options.key_name:
+        parser.error("SSH key name name is required")
+
     try:
         config = configs[options.config][options.region]
     except KeyError:
         parser.error("unknown configuration; run with --list for list of supported configs")
 
     secrets = json.load(open(options.secrets))
-    make_instances(args, options.config, options.region, secrets, options.cleanup)
+    make_instances(args, options.config, options.region, secrets,
+                   options.key_name, options.create_ami)
