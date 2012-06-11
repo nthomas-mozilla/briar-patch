@@ -63,8 +63,10 @@ _defaultOptions = { 'kittens':    ('-k', '--kittens',    None,     'file or url 
                     'cachefile':  ('',   '--cachefile',  None,     'filename to store the "have we touched this kitten before" cache'),
                     'force':      ('',   '--force',      False,    'force processing of a kitten. This ignores the seen cache *AND* SlaveAlloc', 'b'),
                     'email':      ('-e', '--email',      False,    'send result email', 'b'),
+                    'monitor':    ('-m', '--monitor',    False,    'forces processing of any kitten that has not been processed at all', 'b'),
                     'redis':      ('-r', '--redis',     'localhost:6379', 'Redis connection string'),
                     'redisdb':    ('',   '--redisdb',   '8',              'Redis database'),
+                    'smtpServer': ('',   '--smtpServer', None,     'where to send generated email to'),
                   }
 
 
@@ -104,9 +106,15 @@ def getHistory(kitten):
     keys.sort(reverse=True)
     for key in keys:
         d = db.hgetall(key)
-        result += '    %s ' % key.replace('kittenherder:', '').replace(':%s' % kitten, '')
+        indent  = '    %s ' % key.replace('kittenherder:', '').replace(':%s' % kitten, '')
+        result += indent
 
-        for f in ('reachable', 'reboot', 'recovery', 'lastseen'):
+        for f in ('reachable', 'buildbot'):
+            if f in d:
+                result += '%s: %s ' % (f, d[f])
+        result += '\r\n'
+        result += ' ' * len(indent)
+        for f in ('reboot', 'recovery', 'lastseen'):
             if f in d:
                 result += '%s: %s ' % (f, d[f])
         result += '\r\n'
@@ -117,12 +125,13 @@ def getHistory(kitten):
 #                     'tacfile': '', 'pdu': False, 'fqdn': 'bm-xserve20.build.sjc1.mozilla.com.', 'reboot': False, 'reachable': False, 'lastseen': None,
 #                     'buildbot': '', 'master': ''}
 
-def sendEmail(data):
+def sendEmail(data, smtpServer=None):
     if len(data) > 0:
         rebootedOS   = []
         rebootedIPMI = []
         rebootedPDU  = []
         recovered    = []
+        idle         = []
         neither      = []
         body         = ''
 
@@ -143,12 +152,16 @@ def sendEmail(data):
                         rebootedPDU.append(kitten)
                     else:
                         rebootedOS.append(kitten)
+                elif result['recovery']:
+                    recovered.append(kitten)
+                elif 'idle' in result['buildbot']:
+                    idle.append(kitten)
                 else:
-                    if result['recovery']:
-                        recovered.append(kitten)
-                    else:
-                        if not result['reachable']:
-                            neither.append(kitten)
+                    if not result['reachable']:
+                        neither.append(kitten)
+
+        if len(idle) > 0:
+            body += '\r\nbored kittens\r\n    %s\r\n' % ', '.join(idle)
 
         if len(rebootedOS) > 0:
             prevSeen = previouslySeen(rebootedOS, lastRun)
@@ -183,10 +196,11 @@ def sendEmail(data):
             msg['Subject'] = '[briar-patch] idle kittens report'
 
             print body
-            server = smtplib.SMTP('localhost')
-            server.set_debuglevel(True)
-            server.sendmail(addr, [addr], msg.as_string())
-            server.quit()
+            if smtpServer is not None:
+                server = smtplib.SMTP(smtpServer)
+                server.set_debuglevel(True)
+                server.sendmail(addr, [addr], msg.as_string())
+                server.quit()
 
 def processKittens(options, jobs, results):
     remoteEnv = releng.remote.RemoteEnvironment(options.tools, db=db)
@@ -214,40 +228,44 @@ def processKittens(options, jobs, results):
                     else:
                         log.info(job)
                         host = remoteEnv.getHost(job)
-                        r    = remoteEnv.check(host, indent='    ', dryrun=options.dryrun, verbose=options.verbose)
-                        d    = remoteEnv.rebootIfNeeded(host, lastSeen=r['lastseen'], indent='    ', dryrun=options.dryrun, verbose=options.verbose)
+                        if host is None:
+                            log.error('unknown host for %s' % job)
+                        else:
+                            r = remoteEnv.check(host, indent='    ', dryrun=options.dryrun, verbose=options.verbose)
+                            d = remoteEnv.rebootIfNeeded(host, lastSeen=r['lastseen'], indent='    ', dryrun=options.dryrun, verbose=options.verbose)
 
-                        for s in ['reboot', 'recovery', 'ipmi', 'pdu']:
-                            r[s] = d[s]
-                        r['output'] += d['output']
+                            for s in ['reboot', 'recovery', 'ipmi', 'pdu']:
+                                r[s] = d[s]
+                            r['output'] += d['output']
 
-                        hostKey = 'kittenherder:%s.%s:%s' % (dDate, dHour, job)
-                        for key in r:
-                            db.hset(hostKey, key, r[key])
-                        db.expire(hostKey, keyExpire)
+                            hostKey = 'kittenherder:%s.%s:%s' % (dDate, dHour, job)
+                            for key in r:
+                                db.hset(hostKey, key, r[key])
+                            db.expire(hostKey, keyExpire)
 
-                        # all this because json cannot dumps() the timedelta object
-                        td               = r['lastseen']
-                        secs             = td.seconds
-                        hours, remainder = divmod(secs, 3600)
-                        minutes, seconds = divmod(remainder, 60)
-                        r['lastseen']    = { 'hours':    hours,
-                                             'minutes':  minutes,
-                                             'seconds':  seconds,
-                                             'relative': relative(td)
-                                           }
-                        log.info('%s: %s' % (job, json.dumps(r)))
+                            # all this because json cannot dumps() the timedelta object
+                            td = r['lastseen']
+                            if td is not None:
+                                secs             = td.seconds
+                                hours, remainder = divmod(secs, 3600)
+                                minutes, seconds = divmod(remainder, 60)
+                                r['lastseen']    = { 'hours':    hours,
+                                                     'minutes':  minutes,
+                                                     'seconds':  seconds,
+                                                     'relative': relative(td),
+                                                     'since':    secs,
+                                                   }
+                            log.info('%s: %s' % (job, json.dumps(r)))
 
-
-                        if (host.farm == 'ec2') and (r['reboot'] or r['recovery']):
-                            log.info('shutting down ec2 instance')
-                            try:
-                                conn = connect_to_region(host.info['region'],
-                                                         aws_access_key_id=getPassword('aws_access_key_id'),
-                                                         aws_secret_access_key=getPassword('aws_secret_access_key'))
-                                conn.stop_instances(instance_ids=[host.info['id'],])
-                            except:
-                                log.error('unable to stop ec2 instance %s [%s]' % (job, host.info['id']), exc_info=True)
+                            if (host.farm == 'ec2') and (r['reboot'] or r['recovery']):
+                                log.info('shutting down ec2 instance')
+                                try:
+                                    conn = connect_to_region(host.info['region'],
+                                                             aws_access_key_id=getPassword('aws_access_key_id'),
+                                                             aws_secret_access_key=getPassword('aws_secret_access_key'))
+                                    conn.stop_instances(instance_ids=[host.info['id'],])
+                                except:
+                                    log.error('unable to stop ec2 instance %s [%s]' % (job, host.info['id']), exc_info=True)
                 else:
                     if options.verbose:
                         log.info('%s not in requested environment %s (%s), skipping' % (job, options.environ, info['environment']))
@@ -398,7 +416,7 @@ if __name__ == "__main__":
                     seenCache[kitten] = datetime.datetime.now()
 
         if options.email:
-            sendEmail(emailItems)
+            sendEmail(emailItems, options.smtpServer)
 
         if options.verbose:
             log.info('workers should be all done - closing up shop')
