@@ -1,5 +1,9 @@
 *.dat
+*.cfg
 *.pyc
 .idea/
 build/
 dist/
+include/
+lib/
+bin/
