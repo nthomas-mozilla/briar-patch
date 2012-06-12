@@ -22,7 +22,6 @@ configs = {
                 "aws_dev_name": "/dev/sdh",
                 "int_dev_name": "/dev/xvdl",
                 "mount_point": "/mnt",
-                "ami_dev_name": "/dev/sda1",
             },
         },
         "us-west-1": {
@@ -36,7 +35,6 @@ configs = {
                 "aws_dev_name": "/dev/sdh",
                 "int_dev_name": "/dev/xvdl",
                 "mount_point": "/mnt",
-                "ami_dev_name": "/dev/sda1",
            },
         }
     },
@@ -52,7 +50,6 @@ configs = {
                 "aws_dev_name": "/dev/sdh",
                 "int_dev_name": "/dev/xvdl",
                 "mount_point": "/mnt",
-                "ami_dev_name": "/dev/sda1",
             },
         },
         "us-west-1": {
@@ -66,7 +63,6 @@ configs = {
                 "aws_dev_name": "/dev/sdh",
                 "int_dev_name": "/dev/xvdl",
                 "mount_point": "/mnt",
-                "ami_dev_name": "/dev/sda1",
            },
         }
     },
@@ -120,10 +116,11 @@ def create_instance(connection, instance_name, config, key_name):
     return instance
 
 
-def create_ami(connection, options, config, host_instance):
+def create_ami(host_instance, options, config):
     # TODO: use mozilla yum repos
     # TODO: swap?
     # TODO: factor status checks
+    connection = host_instance.connection
     env.host_string = host_instance.public_dns_name
     env.user = 'root'
     env.abort_on_prompts = True
@@ -225,7 +222,7 @@ def create_ami(connection, options, config, host_instance):
     # Step 6: Create an AMI
     log.info('Creating AMI')
     block_map = BlockDeviceMapping()
-    block_map[config['target']['ami_dev_name']] = BlockDeviceType(
+    block_map[host_img.root_device_name] = BlockDeviceType(
         snapshot_id=snapshot.id)
     host_img = connection.get_image(config['ami'])
     ami_id = connection.register_image(
@@ -234,7 +231,7 @@ def create_ami(connection, options, config, host_instance):
         architecture=config['arch'],
         kernel_id=host_img.kernel_id,
         ramdisk_id=host_img.ramdisk_id,
-        root_device_name=config['target']['ami_dev_name'],
+        root_device_name=host_img.root_device_name,
         block_device_map=block_map,
     )
     while True:
@@ -313,8 +310,6 @@ if __name__ == '__main__':
                      '--list for list of supported configs')
 
     connection = create_connection(options)
-    host_instance = create_instance(connection=connection,
-                                    instance_name=args[0],
-                                    config=config, key_name=options.key_name)
-    target_ami = create_ami(connection=connection, options=options,
-                            config=config, host_instance=host_instance)
+    host_instance = create_instance(connection, args[0], config,
+                                    options.key_name)
+    target_ami = create_ami(host_instance, options, config)
