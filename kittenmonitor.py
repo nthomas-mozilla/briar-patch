@@ -31,22 +31,21 @@
         bear    Mike Taylor <bear@mozilla.com>
 """
 
-import os, sys
-import time
 import json
 import logging
 import smtplib
 import email.utils
 
 from email.mime.text import MIMEText
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from boto.ec2 import connect_to_region
 
 from releng import initOptions, initLogs, dbRedis
 
-log = logging.getLogger()
 
+log        = logging.getLogger()
+_keyExpire = 172800 # 2 days in seconds (1 day = 86,400 seconds)
 
 # build:mozilla-inbound-android-debug:b7de9902160746b3afaa3496b55ec8f3
  # {'product': 'mobile',
@@ -299,11 +298,12 @@ def awsUpdate(options):
                 if 'moz-state' in instance.tags:
                     dNow = datetime.now()
                     ts   = dNow.strftime('%Y-%m-%dT%H:%M:%SZ')
+                    farm = 'ec2'
 
                     currStatus = { 'state':        instance.state,
                                    'id':           instance.id,
                                    'timestamp':    ts,
-                                   'farm':         'ec2',
+                                   'farm':         farm,
                                    'image_id':     instance.image_id,
                                    'vpc_id':       instance.vpc_id,
                                    'platform':     instance.platform,
@@ -311,36 +311,40 @@ def awsUpdate(options):
                                    'launchTime':   instance.launch_time,
                                    'instanceType': instance.instance_type,
                                    'ipPrivate':    instance.private_ip_address,
-                                   }
+                                 }
                     for tag in instance.tags.keys():
                         currStatus[tag] = instance.tags[tag]
 
-                    key = 'instance:%s:%s' % (currStatus['Name'], currStatus['id'])
-                    farm = 'farm:%s' % currStatus['farm']
+                    hostKey = '%s:%s:%s' % (farm, currStatus['Name'], currStatus['id'])
+                    farmKey = 'farm:%s' % farm
 
-                    db.sadd(farm, key)
-                    if farm not in current:
-                        current[farm] = []
-                    current[farm].append(key)
+                    print hostKey, farmKey, currStatus['moz-state']
 
-                    print key, farm, currStatus['moz-state']
+                    db.sadd(farmKey, hostKey)
 
-                    if currStatus['state'] == 'running':
-                        db.sadd('%s:active'   % farm, key)
-                        db.srem('%s:inactive' % farm, key)
-                    else:
-                        db.sadd('%s:inactive' % farm, key)
-                        db.srem('%s:active'   % farm, key)
+                    if 'ec2' in currStatus['Name'].lower():
+                        if farm not in current:
+                            current[farm] = []
+                        current[farm].append(hostKey)
 
-                    prevStatus = db.hgetall(key)
+                        if currStatus['state'] == 'running':
+                            db.sadd('%s:active'   % farm, hostKey)
+                            db.srem('%s:inactive' % farm, hostKey)
+                        else:
+                            db.sadd('%s:inactive' % farm, hostKey)
+                            db.srem('%s:active'   % farm, hostKey)
+
+                    prevStatus = db.hgetall(hostKey)
 
                     pipe = db._redis.pipeline()
                     if len(prevStatus) > 0:
-                        pipe.rpush('%s:history' % key, prevStatus)
-                        pipe.ltrim('%s:history' % key, 0, 300)
+                        pipe.rpush('%s:history' % hostKey, prevStatus)
+                        pipe.ltrim('%s:history' % hostKey, 0, 300)
                     for tag in currStatus:
-                        pipe.hset(key, tag, currStatus[tag])
+                        pipe.hset(hostKey, tag, currStatus[tag])
+                        pipe.expire(hostKey, _keyExpire)
                     pipe.execute()
+
         for farm in current.keys():
             for key in db.smembers('%s:active' % farm):
                 if key not in current[farm]:
