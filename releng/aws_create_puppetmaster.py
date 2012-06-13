@@ -29,7 +29,7 @@ def create_master(conn, name, options, config):
 
     reservation = conn.run_instances(
             image_id=config['ami'],
-            key_name=config['key_name'],
+            key_name=options.key_name,
             instance_type=config['instance_type'],
             client_token=token,
             subnet_id=config.get('subnet_id'),
@@ -100,7 +100,6 @@ configs =  {
             "subnet_id": "subnet-59e94330",
             "security_group_ids": ["sg-38150854"],
             "instance_type": "c1.medium",
-            "key_name": "linux-test-west",
             "repo_snapshot_id": "snap-923f90f5", # This will be mounted at /data
         },
     },
@@ -113,12 +112,14 @@ if __name__ == '__main__':
             config=None,
             region="us-west-1",
             secrets=None,
+            key_name=None,
             action="create",
             instance=None,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
+    parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
     parser.add_option("-i", "--instance", dest="instance", help="puppetize existing instance")
 
