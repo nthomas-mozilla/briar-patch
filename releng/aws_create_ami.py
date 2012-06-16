@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import boto
 from boto.ec2 import connect_to_region
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 from fabric.api import run, put, env, lcd
@@ -39,6 +40,62 @@ configs = {
         }
     },
     "centos-6-i386-base": {
+        "us-east-1": {
+            "ami": "ami-cdd306a4",  # Any RHEL-6. i386 AMI
+            "instance_type": "m1.medium",
+            "arch": "i386",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+            },
+        },
+        "us-west-1": {
+            "ami": "ami-e50e50a0",
+            "instance_type": "m1.medium",
+            "arch": "i386",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+           },
+        }
+    },
+    "fedora-12-x86_64-desktop": {
+        "us-east-1": {
+            "ami": "ami-41d00528",  # Any RHEL-6.2 AMI
+            "instance_type": "c1.xlarge",
+            "arch": "x86_64",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+            },
+        },
+        "us-west-1": {
+            "ami": "ami-250e5060",  # Any RHEL-6.2 AMI
+            "instance_type": "c1.xlarge",
+            "arch": "x86_64",
+            "target": {
+                "size": 4,
+                "fs_type": "ext4",
+                "e2_label": "root_dev",
+                "aws_dev_name": "/dev/sdh",
+                "int_dev_name": "/dev/xvdl",
+                "mount_point": "/mnt",
+           },
+        }
+    },
+    "fedora-12-i386-desktop": {
         "us-east-1": {
             "ami": "ami-cdd306a4",  # Any RHEL-6. i386 AMI
             "instance_type": "m1.medium",
@@ -161,11 +218,12 @@ def create_ami(host_instance, options, config):
     # Step 2: install base system
     with lcd(target_name):
         put('etc/yum-local.cfg', '%s/etc/yum-local.cfg' % mount_point)
+        put('groupinstall', '/tmp/groupinstall')
+        put('additional_packages', '/tmp/additional_packages')
     yum = 'yum -c {0}/etc/yum-local.cfg -y --installroot={0} '.format(
         mount_point)
-    run('%s groupinstall Base' % yum)
-    run('%s install dhclient' % yum)
-    run('%s install openssh-server' % yum)
+    run('%s groupinstall "`cat /tmp/groupinstall`"' % yum)
+    run('%s install `cat /tmp/additional_packages`' % yum)
     run('%s clean packages' % yum)
 
     # Step 3: upload custom configuration files
@@ -192,6 +250,8 @@ def create_ami(host_instance, options, config):
         % mount_point)
 
     run('chroot %s chkconfig --level 2345 network on' % mount_point)
+    run('chroot %s chkconfig --level 2345 firstboot off || :' % mount_point)
+    run('chroot %s chkconfig --level 2345 NetworkManager off || :' % mount_point)
 
     run('umount %s/proc' % mount_point)
     run('umount %s' % mount_point)
@@ -221,10 +281,10 @@ def create_ami(host_instance, options, config):
 
     # Step 6: Create an AMI
     log.info('Creating AMI')
+    host_img = connection.get_image(config['ami'])
     block_map = BlockDeviceMapping()
     block_map[host_img.root_device_name] = BlockDeviceType(
         snapshot_id=snapshot.id)
-    host_img = connection.get_image(config['ami'])
     ami_id = connection.register_image(
         target_name,
         '%s EBS AMI' % target_name,

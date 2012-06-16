@@ -36,7 +36,13 @@ def assimilate(ip_addr, config, instance_data, create_ami):
             run('resize2fs {dev}'.format(dev=mapping['instance_dev']))
 
     # Set up /etc/hosts to talk to 'puppet'
-    run('echo "127.0.0.1 localhost.localdomain localhost\n::1 localhost6.localdomain6 localhost6\n{puppet_ip} puppet\n" > /etc/hosts'.format(**instance_data))
+    run('echo "'
+        '127.0.0.1 localhost.localdomain localhost\n'
+        '::1 localhost6.localdomain6 localhost6\n'
+        '{puppet_ip} puppet\n'
+        '{puppetca_ip} puppetca-01.srv.releng.aws-us-west-1.mozilla.com\n'
+        '{puppetmaster_ip} puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
+        '" > /etc/hosts'.format(**instance_data))
 
     # Set up yum repos
     run('rm -f /etc/yum.repos.d/*')
@@ -45,12 +51,13 @@ def assimilate(ip_addr, config, instance_data, create_ami):
 
     # Get puppet installed
     run('yum install -q -y puppet')
+    ####################################################################################################################put('puppet.conf', '/etc/puppet/puppet.conf')
 
     # Run puppet
     # We need --detailed-exitcodes here otherwise puppet will return 0
     # sometimes when it fails to install dependencies
     with settings(warn_only=True):
-        result = run("puppetd --server puppet --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
+        result = run("puppetd --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
         assert result.return_code in (0,2)
 
     if create_ami:
@@ -74,7 +81,9 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.236.242',
+            'puppet_ip': '10.130.111.5',
+            'puppetmaster_ip': '10.130.111.5',
+            'puppetca_ip': '10.130.57.93',
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
