@@ -136,10 +136,9 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, config_name, region, secrets):
+def make_instances(names, config, region, secrets):
     """Create instances for each name of names for the given configuration"""
     procs = []
-    config = configs[config_name][region]
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
@@ -153,25 +152,6 @@ def make_instances(names, config_name, region, secrets):
         p.join()
 
 # TODO: Move this into separate file(s)
-configs =  {
-    "rhel6-mock": {
-        "us-west-1": {
-            "type": "rhel6-mock",
-            "ami": "ami-250e5060", # RHEL-6.2-Starter-EBS-x86_64-4-Hourly2
-            "subnet_id": "subnet-59e94330",
-            "security_group_ids": [],
-            "instance_type": "c1.xlarge",
-            "key_name": "linux-test-west",
-            "device_map": {
-                "/dev/sda1": {
-                    "size": 50,
-                    "instance_dev": "/dev/xvde1",
-                },
-            },
-        },
-    },
-}
-
 if __name__ == '__main__':
     from optparse import OptionParser
     parser = OptionParser()
@@ -179,22 +159,14 @@ if __name__ == '__main__':
             config=None,
             region="us-west-1",
             secrets=None,
-            action="create",
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
-    parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
 
     options, args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-
-    if options.action == "list":
-        for config, regions in configs.items():
-            print config, regions.keys()
-        # All done!
-        raise SystemExit(0)
 
     if not args:
         parser.error("at least one instance name is required")
@@ -206,9 +178,9 @@ if __name__ == '__main__':
         parser.error("secrets are required")
 
     try:
-        config = configs[options.config][options.region]
+        config = json.load(open(options.config))[options.region]
     except KeyError:
-        parser.error("unknown configuration; run with --list for list of supported configs")
+        parser.error("unknown configuration")
 
     secrets = json.load(open(options.secrets))
-    make_instances(args, options.config, options.region, secrets)
+    make_instances(args, config, options.region, secrets)
