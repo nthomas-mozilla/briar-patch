@@ -2,6 +2,7 @@
 import json
 import uuid
 import time
+import boto
 
 from fabric.api import run, put, env, sudo, settings
 from boto.ec2 import connect_to_region
@@ -51,13 +52,15 @@ def assimilate(ip_addr, config, instance_data, create_ami):
 
     # Get puppet installed
     run('yum install -q -y puppet')
-    ####################################################################################################################put('puppet.conf', '/etc/puppet/puppet.conf')
 
     # Run puppet
     # We need --detailed-exitcodes here otherwise puppet will return 0
     # sometimes when it fails to install dependencies
     with settings(warn_only=True):
-        result = run("puppetd --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
+        result = run("puppetd --onetime --no-daemonize --verbose "
+                     "--detailed-exitcodes --waitforcert 10 "
+                    "--server puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com "
+                    "--ca_server puppetca-01.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
 
     if create_ami:
@@ -81,9 +84,9 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.111.5',
-            'puppetmaster_ip': '10.130.111.5',
-            'puppetca_ip': '10.130.57.93',
+            'puppet_ip': '10.130.40.28',
+            'puppetmaster_ip': '10.130.40.28',
+            'puppetca_ip': '10.130.77.215',
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
