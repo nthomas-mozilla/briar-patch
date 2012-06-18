@@ -90,7 +90,7 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
-            'hostname': '{name}.releng.aws-{region}.mozilla.com'.format(name=name, region=region),
+            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
             }
 
     bdm = None
