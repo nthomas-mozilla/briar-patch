@@ -1,0 +1,15 @@
+{"us-west-1": {
+        "type": "centos6-mock",
+        "ami": "ami-cda8f288",
+        "subnet_id": "subnet-59e94330",
+        "security_group_ids": [],
+        "instance_type": "c1.xlarge",
+        "key_name": "linux-test-west",
+        "device_map": {
+            "/dev/sda1": {
+                "size": 50,
+                "instance_dev": "/dev/xvde1"
+            }
+        }
+    }
+}

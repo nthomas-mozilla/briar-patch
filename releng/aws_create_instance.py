@@ -2,6 +2,7 @@
 import json
 import uuid
 import time
+import boto
 
 from fabric.api import run, put, env, sudo, settings
 from boto.ec2 import connect_to_region
@@ -10,7 +11,7 @@ from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 import logging
 log = logging.getLogger()
 
-def assimilate(ip_addr, config, instance_data):
+def assimilate(ip_addr, config, instance_data, create_ami):
     """Assimilate hostname into our collective
 
     What this means is that hostname will be set up with some basic things like
@@ -36,7 +37,13 @@ def assimilate(ip_addr, config, instance_data):
             run('resize2fs {dev}'.format(dev=mapping['instance_dev']))
 
     # Set up /etc/hosts to talk to 'puppet'
-    run('echo "127.0.0.1 localhost.localdomain localhost\n::1 localhost6.localdomain6 localhost6\n{puppet_ip} puppet\n" > /etc/hosts'.format(**instance_data))
+    run('echo "'
+        '127.0.0.1 localhost.localdomain localhost\n'
+        '::1 localhost6.localdomain6 localhost6\n'
+        '{puppet_ip} puppet\n'
+        '{puppetca_ip} puppetca-01.srv.releng.aws-us-west-1.mozilla.com\n'
+        '{puppetmaster_ip} puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
+        '" > /etc/hosts'.format(**instance_data))
 
     # Set up yum repos
     run('rm -f /etc/yum.repos.d/*')
@@ -50,8 +57,15 @@ def assimilate(ip_addr, config, instance_data):
     # We need --detailed-exitcodes here otherwise puppet will return 0
     # sometimes when it fails to install dependencies
     with settings(warn_only=True):
-        result = run("puppetd --server puppet --onetime --no-daemonize --verbose --detailed-exitcodes --waitforcert 10")
+        result = run("puppetd --onetime --no-daemonize --verbose "
+                     "--detailed-exitcodes --waitforcert 10 "
+                    "--server puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com "
+                    "--ca_server puppetca-01.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
+
+    if create_ami:
+        run('find /var/lib/puppet/ssl -type f -delete')
+        return
 
     # Set up a stub buildbot.tac
     sudo("/tools/buildbot/bin/buildslave create-slave /builds/slave {buildbot_master} {name} {buildslave_password}".format(**instance_data), user="cltbld")
@@ -59,7 +73,7 @@ def assimilate(ip_addr, config, instance_data):
     # Start buildbot
     run("/etc/init.d/buildbot start")
 
-def create_instance(name, config, region, secrets):
+def create_instance(name, config, region, secrets, key_name, create_ami=False):
     """Creates an AMI instance with the given name and config. The config must specify things like ami id."""
     conn = connect_to_region(region,
             aws_access_key_id=secrets['aws_access_key_id'],
@@ -70,11 +84,13 @@ def create_instance(name, config, region, secrets):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.236.242',
+            'puppet_ip': '10.130.40.28',
+            'puppetmaster_ip': '10.130.40.28',
+            'puppetca_ip': '10.130.77.215',
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
-            'hostname': '{name}.releng.aws-{region}.mozilla.com'.format(name=name, region=region),
+            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
             }
 
     bdm = None
@@ -85,7 +101,7 @@ def create_instance(name, config, region, secrets):
 
     reservation = conn.run_instances(
             image_id=config['ami'],
-            key_name=config['key_name'],
+            key_name=key_name,
             instance_type=config['instance_type'],
             block_device_map=bdm,
             client_token=token,
@@ -112,14 +128,69 @@ def create_instance(name, config, region, secrets):
     while True:
         try:
             if instance.subnet_id:
-                assimilate(instance.private_ip_address, config, instance_data)
+                assimilate(instance.private_ip_address, config, instance_data, create_ami)
             else:
-                assimilate(instance.public_dns_name, config, instance_data)
+                assimilate(instance.public_dns_name, config, instance_data, create_ami)
             break
         except:
             log.exception("problem assimilating %s", instance)
             time.sleep(10)
-    instance.add_tag('moz-state', 'ready')
+    if not create_ami:
+        instance.add_tag('moz-state', 'ready')
+    else:
+        ami_from_instance(instance)
+
+def ami_from_instance(instance):
+    base_ami = instance.connection.get_image(instance.image_id)
+    target_name = '%s-puppetized' % base_ami.name
+    v = instance.connection.get_all_volumes(
+        filters={'attachment.instance-id': instance.id})[0]
+    instance.stop()
+    log.info('Stopping instance')
+    while True:
+        try:
+            instance.update()
+            if instance.state == 'stopped':
+                break
+        except:
+            log.info('Waiting for instance stop')
+            time.sleep(10)
+    log.info('Creating snapshot')
+    snapshot = v.create_snapshot('EBS-backed %s' % target_name)
+    while True:
+        try:
+            snapshot.update()
+            if snapshot.status == 'completed':
+                break
+        except:
+            log.exception('hit error waiting for snapshot to be taken')
+            time.sleep(10)
+    snapshot.add_tag('Name', target_name)
+
+    log.info('Creating AMI')
+    block_map = BlockDeviceMapping()
+    block_map[base_ami.root_device_name] = BlockDeviceType(
+        snapshot_id=snapshot.id)
+    ami_id = instance.connection.register_image(
+        target_name,
+        '%s EBS AMI' % target_name,
+        architecture=base_ami.architecture,
+        kernel_id=base_ami.kernel_id,
+        ramdisk_id=base_ami.ramdisk_id,
+        root_device_name=base_ami.root_device_name,
+        block_device_map=block_map,
+    )
+    while True:
+        try:
+            ami = instance.connection.get_image(ami_id)
+            ami.add_tag('Name', target_name)
+            log.info('AMI created')
+            log.info('ID: {id}, name: {name}'.format(id=ami.id, name=ami.name))
+            break
+        except boto.exception.EC2ResponseError:
+            log.info('Wating for AMI')
+            time.sleep(10)
+    instance.terminate()
 
 import multiprocessing
 import sys
@@ -136,13 +207,14 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, config, region, secrets):
+def make_instances(names, config, region, secrets, key_name, create_ami):
     """Create instances for each name of names for the given configuration"""
     procs = []
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
-                           args=(name, config, region, secrets),
+                           args=(name, config, region, secrets, key_name,
+                                 create_ami),
                            )
         p.start()
         procs.append(p)
@@ -151,7 +223,6 @@ def make_instances(names, config, region, secrets):
     for p in procs:
         p.join()
 
-# TODO: Move this into separate file(s)
 if __name__ == '__main__':
     from optparse import OptionParser
     parser = OptionParser()
@@ -159,10 +230,17 @@ if __name__ == '__main__':
             config=None,
             region="us-west-1",
             secrets=None,
+            key_name=None,
+            action="create",
+            create_ami=False,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
+    parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
+    parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
+    parser.add_option("--create-ami", dest="create_ami", action="store_true",
+                      help="create AMI from instance")
 
     options, args = parser.parse_args()
 
@@ -177,10 +255,13 @@ if __name__ == '__main__':
     if not options.secrets:
         parser.error("secrets are required")
 
+    if not options.key_name:
+        parser.error("SSH key name name is required")
+
     try:
         config = json.load(open(options.config))[options.region]
     except KeyError:
         parser.error("unknown configuration")
 
     secrets = json.load(open(options.secrets))
-    make_instances(args, config, options.region, secrets)
+    make_instances(args, config, options.region, secrets, options.key_name, options.create_ami)
