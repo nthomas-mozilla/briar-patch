@@ -244,7 +244,7 @@ configs =  {
     "centos-6-x86_64-base": {
         "us-west-1": {
             "type": "centos-6-x86_64-base",
-            "ami": "ami-cda8f288",
+            "ami": "ami-696f4a2c",
             "subnet_id": "subnet-59e94330",
             "security_group_ids": [],
             "instance_type": "c1.xlarge",
