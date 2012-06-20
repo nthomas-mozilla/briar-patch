@@ -40,9 +40,8 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     run('echo "'
         '127.0.0.1 localhost.localdomain localhost\n'
         '::1 localhost6.localdomain6 localhost6\n'
-        '{puppet_ip} puppet\n'
         '{puppetca_ip} puppetca-01.srv.releng.aws-us-west-1.mozilla.com\n'
-        '{puppetmaster_ip} puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
+        '{puppetmaster_ip} puppet puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
         '" > /etc/hosts'.format(**instance_data))
 
     # Set up yum repos
@@ -59,7 +58,7 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     with settings(warn_only=True):
         result = run("puppetd --onetime --no-daemonize --verbose "
                      "--detailed-exitcodes --waitforcert 10 "
-                    "--server puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com "
+                    "--server puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com "
                     "--ca_server puppetca-01.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
 
@@ -84,8 +83,7 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.40.28',
-            'puppetmaster_ip': '10.130.40.28',
+            'puppetmaster_ip': '10.130.206.231',
             'puppetca_ip': '10.130.77.215',
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
@@ -233,12 +231,14 @@ if __name__ == '__main__':
             key_name=None,
             action="create",
             create_ami=False,
+            instance_id=None,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
     parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
+    parser.add_option("-i", "--instnace", dest="instance_id", help="assimilate existing instance")
     parser.add_option("--create-ami", dest="create_ami", action="store_true",
                       help="create AMI from instance")
 
@@ -264,4 +264,21 @@ if __name__ == '__main__':
         parser.error("unknown configuration")
 
     secrets = json.load(open(options.secrets))
+
+    if options.instance_id:
+        conn = connect_to_region(options.region,
+                aws_access_key_id=secrets['aws_access_key_id'],
+                aws_secret_access_key=secrets['aws_secret_access_key'],
+                )
+        instance = conn.get_all_instances([options.instance_id])[0].instances[0]
+        instance_data = {
+                'puppetmaster_ip': '10.130.33.210',
+                'puppetca_ip': '10.130.77.215',
+                'name': args[0],
+                'buildbot_master': '10.12.48.14:9049',
+                'buildslave_password': 'pass',
+                'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=args[0], region=options.region),
+                }
+        assimilate(instance.private_ip_address, config, instance_data, False)
+
     make_instances(args, config, options.region, secrets, options.key_name, options.create_ami)
