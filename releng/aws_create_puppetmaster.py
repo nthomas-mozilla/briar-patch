@@ -3,7 +3,7 @@ import json
 import uuid
 import time
 
-from fabric.api import run, put, env, sudo, local
+from fabric.api import run, put, env, local
 from boto.ec2 import connect_to_region
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType
 
@@ -90,8 +90,6 @@ def puppetize(instance, name, options):
               ip=instance.private_ip_address,
               puppet_dir=options.puppet_dir)
          )
-    run("ln -s %s-config.csv /etc/puppet/production/manifests/extlookup/local-config.csv" % flavour)
-    run("echo 0 > /selinux/enforce")
     run("chown -R root:root /etc/puppet/production")
     run("hostname {name}.srv.releng.aws-{region}.mozilla.com".format(
         name=name, region=options.region))
@@ -102,12 +100,22 @@ def puppetize(instance, name, options):
         "/etc/puppet/production/manifests/%s.pp" % flavour)
     run("echo 127.0.0.1 {name}.srv.releng.aws-{region}.mozilla.com >> /etc/hosts".format(
         name=name, region=options.region))
+    #run("/sbin/chkconfig puppet off")
     if options.puppetca_hostname and options.puppetca_ip:
-        run("echo {ip} {name}.srv.releng.aws-{region}.mozilla.com >> /etc/hosts".format(
-        ip=options.puppetca_ip, name=options.puppetca_hostname, region=options.region))
-    if options.puppetca:
-        run("ln -s /var/lib/puppet/ssl/ca/ca_crl.pem "
-            "/etc/puppet/production/modules/toplevel/files/server/puppet/")
+        puppetca_fqdn = "{name}.srv.releng.aws-{region}.mozilla.com".format(
+            name=options.puppetca_hostname, region=options.region)
+        run("echo {ip} {puppetca_fqdn} >> /etc/hosts".format(
+        ip=options.puppetca_ip, puppetca_fqdn=puppetca_fqdn))
+        if not options.puppetca:
+            # cert request
+            run("find /var/lib/puppet/ssl -type f -delete")
+            # XXX: requires manual signing on puppetca
+            # puppet cert --allow-dns-alt-names sign
+            # puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com
+            run("puppetd --onetime --no-daemonize --verbose "
+                "--waitforcert 10 --dns_alt_names puppet "
+                "--server {puppetca_fqdn} || :".format(
+                    puppetca_fqdn=puppetca_fqdn))
     instance.add_tag('moz-state', 'ready')
 
     log.info("Creating EIP and associating")
@@ -120,12 +128,11 @@ def puppetize(instance, name, options):
 configs =  {
     "centos-6-x86_64-base": {
         "us-west-1": {
-            #"ami": "ami-250e5060", # RHEL-6.2-Starter-EBS-x86_64-4-Hourly2
-            "ami": "ami-cda8f288", # Centos6
+            "ami": "ami-696f4a2c", # Centos6
             "subnet_id": "subnet-59e94330",
             "security_group_ids": ["sg-38150854"],
             "instance_type": "c1.medium",
-            "repo_snapshot_id": "snap-3695f651", # This will be mounted at /data
+            "repo_snapshot_id": "snap-bae7e2dd", # This will be mounted at /data
         },
     },
 }

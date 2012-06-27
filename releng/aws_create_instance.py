@@ -3,6 +3,7 @@ import json
 import uuid
 import time
 import boto
+import StringIO
 
 from fabric.api import run, put, env, sudo, settings
 from boto.ec2 import connect_to_region
@@ -37,13 +38,12 @@ def assimilate(ip_addr, config, instance_data, create_ami):
             run('resize2fs {dev}'.format(dev=mapping['instance_dev']))
 
     # Set up /etc/hosts to talk to 'puppet'
-    run('echo "'
-        '127.0.0.1 localhost.localdomain localhost\n'
-        '::1 localhost6.localdomain6 localhost6\n'
-        '{puppet_ip} puppet\n'
-        '{puppetca_ip} puppetca-01.srv.releng.aws-us-west-1.mozilla.com\n'
-        '{puppetmaster_ip} puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
-        '" > /etc/hosts'.format(**instance_data))
+    hosts = ['127.0.0.1 localhost.localdomain localhost',
+            '::1 localhost6.localdomain6 localhost6'] + \
+            ["%s %s" % (ip, host) for host, ip in
+                       instance_data['hosts'].iteritems()]
+    hosts = StringIO.StringIO("\n".join(hosts) + "\n")
+    put(hosts, '/etc/hosts')
 
     # Set up yum repos
     run('rm -f /etc/yum.repos.d/*')
@@ -59,8 +59,8 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     with settings(warn_only=True):
         result = run("puppetd --onetime --no-daemonize --verbose "
                      "--detailed-exitcodes --waitforcert 10 "
-                    "--server puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com "
-                    "--ca_server puppetca-01.srv.releng.aws-us-west-1.mozilla.com")
+                    "--server puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com "
+                    "--ca_server puppetca-02.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
 
     if create_ami:
@@ -84,9 +84,16 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     token = str(uuid.uuid4())[:16]
 
     instance_data = {
-            'puppet_ip': '10.130.40.28',
-            'puppetmaster_ip': '10.130.40.28',
-            'puppetca_ip': '10.130.77.215',
+            'hosts':
+                {
+                    'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.104.67',
+                    'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.71.90',
+                    'puppet': '10.130.71.90',
+                    'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.75.122'
+                },
             'name': name,
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
@@ -259,7 +266,7 @@ configs =  {
     "centos-6-x86_64-base-puppetized": {
         "us-west-1": {
             "type": "centos-6-x86_64-base-puppetized",
-            "ami": "ami-83a8f2c6",
+            "ami": "ami-7d567338",
             "subnet_id": "subnet-59e94330",
             "security_group_ids": [],
             "instance_type": "c1.xlarge",
