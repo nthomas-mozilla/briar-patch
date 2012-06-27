@@ -231,6 +231,7 @@ def create_ami(host_instance, options, config):
         for f in ('etc/rc.local', 'etc/fstab', 'etc/hosts',
                   'etc/sysconfig/network',
                   'etc/sysconfig/network-scripts/ifcfg-eth0',
+                  'etc/init.d/rc.local',
                   'boot/grub/grub.conf'):
             put(f, '%s/%s' % (mount_point, f), mirror_local_mode=True)
 
@@ -250,6 +251,7 @@ def create_ami(host_instance, options, config):
         % mount_point)
 
     run('chroot %s chkconfig --level 2345 network on' % mount_point)
+    run('chroot %s chkconfig --level 2345 rc.local on' % mount_point)
     run('chroot %s chkconfig --level 2345 firstboot off || :' % mount_point)
     run('chroot %s chkconfig --level 2345 NetworkManager off || :' % mount_point)
 
