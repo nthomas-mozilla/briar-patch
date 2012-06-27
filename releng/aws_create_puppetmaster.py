@@ -37,6 +37,7 @@ def create_master(conn, name, options, config):
             security_group_ids=config.get('security_group_ids', []),
             block_device_map=bdm,
             placement=zones[0].name,
+            disable_api_termination=True,
             )
 
     instance = reservation.instances[0]
