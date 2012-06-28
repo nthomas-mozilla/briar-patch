@@ -3,6 +3,7 @@ import json
 import uuid
 import time
 import boto
+import StringIO
 
 from fabric.api import run, put, env, sudo, settings
 from boto.ec2 import connect_to_region
@@ -37,12 +38,12 @@ def assimilate(ip_addr, config, instance_data, create_ami):
             run('resize2fs {dev}'.format(dev=mapping['instance_dev']))
 
     # Set up /etc/hosts to talk to 'puppet'
-    run('echo "'
-        '127.0.0.1 localhost.localdomain localhost\n'
-        '::1 localhost6.localdomain6 localhost6\n'
-        '{puppetca_ip} puppetca-01.srv.releng.aws-us-west-1.mozilla.com\n'
-        '{puppetmaster_ip} puppet puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com\n'
-        '" > /etc/hosts'.format(**instance_data))
+    hosts = ['127.0.0.1 localhost.localdomain localhost',
+            '::1 localhost6.localdomain6 localhost6'] + \
+            ["%s %s" % (ip, host) for host, ip in
+                       instance_data['hosts'].iteritems()]
+    hosts = StringIO.StringIO("\n".join(hosts) + "\n")
+    put(hosts, '/etc/hosts')
 
     # Set up yum repos
     run('rm -f /etc/yum.repos.d/*')
@@ -59,7 +60,7 @@ def assimilate(ip_addr, config, instance_data, create_ami):
         result = run("puppetd --onetime --no-daemonize --verbose "
                      "--detailed-exitcodes --waitforcert 10 "
                     "--server puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com "
-                    "--ca_server puppetca-01.srv.releng.aws-us-west-1.mozilla.com")
+                    "--ca_server puppetca-02.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
 
     if create_ami:
@@ -72,7 +73,8 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     # Start buildbot
     run("/etc/init.d/buildbot start")
 
-def create_instance(name, config, region, secrets, key_name, create_ami=False):
+def create_instance(name, config, region, secrets, key_name, instance_data,
+                    create_ami=False):
     """Creates an AMI instance with the given name and config. The config must specify things like ami id."""
     conn = connect_to_region(region,
             aws_access_key_id=secrets['aws_access_key_id'],
@@ -82,14 +84,10 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     # Make sure we don't request the same things twice
     token = str(uuid.uuid4())[:16]
 
-    instance_data = {
-            'puppetmaster_ip': '10.130.206.231',
-            'puppetca_ip': '10.130.77.215',
-            'name': name,
-            'buildbot_master': '10.12.48.14:9049',
-            'buildslave_password': 'pass',
-            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
-            }
+    instance_data = instance_data.copy()
+    instance_data['name'] = name
+    instance_data['hostname'] = '{name}.build.aws-{region}.mozilla.com'.format(
+        name=name, region=region)
 
     bdm = None
     if 'device_map' in config:
@@ -205,14 +203,15 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, config, region, secrets, key_name, create_ami):
+def make_instances(names, config, region, secrets, key_name, instance_data,
+                   create_ami):
     """Create instances for each name of names for the given configuration"""
     procs = []
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
                            args=(name, config, region, secrets, key_name,
-                                 create_ami),
+                                 instance_data, create_ami),
                            )
         p.start()
         procs.append(p)
@@ -220,6 +219,7 @@ def make_instances(names, config, region, secrets, key_name, create_ami):
     log.info("waiting for workers")
     for p in procs:
         p.join()
+
 
 if __name__ == '__main__':
     from optparse import OptionParser
@@ -265,20 +265,30 @@ if __name__ == '__main__':
 
     secrets = json.load(open(options.secrets))
 
+    instance_data = {
+            'hosts':
+                {
+                    'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.104.67',
+                    'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.71.90',
+                    'puppet': '10.130.71.90',
+                    'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.75.122'
+                },
+            'buildbot_master': '10.12.48.14:9049',
+            'buildslave_password': 'pass',
+            }
     if options.instance_id:
         conn = connect_to_region(options.region,
                 aws_access_key_id=secrets['aws_access_key_id'],
                 aws_secret_access_key=secrets['aws_secret_access_key'],
                 )
         instance = conn.get_all_instances([options.instance_id])[0].instances[0]
-        instance_data = {
-                'puppetmaster_ip': '10.130.33.210',
-                'puppetca_ip': '10.130.77.215',
-                'name': args[0],
-                'buildbot_master': '10.12.48.14:9049',
-                'buildslave_password': 'pass',
-                'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=args[0], region=options.region),
-                }
+        instance_data['name'] = args[0]
+        instance_data['hostname'] = '{name}.build.aws-{region}.mozilla.com'.format(
+            name=args[0], region=options.region)
         assimilate(instance.private_ip_address, config, instance_data, False)
-
-    make_instances(args, config, options.region, secrets, options.key_name, options.create_ami)
+    else:
+        make_instances(args, config, options.region, secrets, options.key_name,
+                       instance_data, options.create_ami)

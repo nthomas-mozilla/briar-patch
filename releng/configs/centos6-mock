@@ -4,7 +4,6 @@
         "subnet_id": "subnet-59e94330",
         "security_group_ids": [],
         "instance_type": "c1.xlarge",
-        "key_name": "linux-test-west",
         "device_map": {
             "/dev/sda1": {
                 "size": 50,

@@ -1,7 +1,7 @@
 {
     "us-west-1": {
         "type": "centos-6-x86_64-base-puppetized",
-        "ami": "ami-83a8f2c6",
+        "ami": "ami-7d567338",
         "subnet_id": "subnet-59e94330",
         "security_group_ids": [],
         "instance_type": "c1.xlarge",
