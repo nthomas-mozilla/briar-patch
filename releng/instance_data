@@ -1,0 +1,12 @@
+{
+'hosts':
+    {
+        'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com': '10.130.104.67',
+        'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com': '10.130.71.90',
+        'puppetmaster-04.srv.releng.aws-us-west-1.mozilla.com': '10.130.247.78',
+        'puppet': '10.130.247.78',
+        'puppetca-02.srv.releng.aws-us-west-1.mozilla.com': '10.130.75.122'
+    },
+'buildbot_master': '10.12.48.14:9049',
+'buildslave_password': 'pass'
+}
