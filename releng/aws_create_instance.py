@@ -278,8 +278,6 @@ if __name__ == '__main__':
                 },
             'buildbot_master': '10.12.48.14:9049',
             'buildslave_password': 'pass',
-            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
-            'name': name,
             }
     if options.instance_id:
         conn = connect_to_region(options.region,
