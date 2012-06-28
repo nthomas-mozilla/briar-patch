@@ -20,30 +20,26 @@ log = logging.getLogger()
 # Mapping of builder names to ec2 instance types
 # TODO: move to external file
 builder_map = {
-        "Android (Debug )?mozilla-inbound build": "rhel6-mock",
-        "b2g fedora16-i386 mozilla-inbound build": "rhel6-mock",
-        "b2g fedora16-i386 mozilla-inbound build": "rhel6-mock",
-        "Linux (x86-64 )?mozilla-inbound (leak test )?build": "rhel6-mock",
-        "Linux (x86-64 )?mozilla-inbound pgo-build": "rhel6-mock",
+        "B2G.*": "bld-linux64",
         }
 
 max_instances = {
-        'rhel6-mock': 11,
+        'bld-linux64': 11,
         }
 
 instance_names = {
-        'rhel6-mock': 'ec2-%03d',
+        'bld-linux64': 'bld-linux64-ec2-%03d',
         }
 
 def find_pending(db):
     engine = sa.create_engine(db)
     result = engine.execute(sa.text("""
-        SELECT buildername, count(*) FROM 
+        SELECT buildername, count(*) FROM
                buildrequests WHERE
                complete=0 AND
                claimed_at=0 AND
                submitted_at > :yesterday
-               
+
                GROUP BY buildername"""), yesterday=time.time()-86400)
     retval = result.fetchall()
     return retval
