@@ -232,13 +232,15 @@ if __name__ == '__main__':
             action="create",
             create_ami=False,
             instance_id=None,
+            instance_data=None,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
     parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
-    parser.add_option("-i", "--instnace", dest="instance_id", help="assimilate existing instance")
+    parser.add_option("--instance_id", dest="instance_id", help="assimilate existing instance")
+    parser.add_option("-i", "--instance-data", dest="instance_data", help="instance specific data")
     parser.add_option("--create-ami", dest="create_ami", action="store_true",
                       help="create AMI from instance")
 
@@ -255,6 +257,9 @@ if __name__ == '__main__':
     if not options.secrets:
         parser.error("secrets are required")
 
+    if not options.instance_data:
+        parser.error("instance data is required")
+
     if not options.key_name:
         parser.error("SSH key name name is required")
 
@@ -265,22 +270,7 @@ if __name__ == '__main__':
 
     secrets = json.load(open(options.secrets))
 
-    instance_data = {
-            'hosts':
-                {
-                    'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.104.67',
-                    'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.71.90',
-                    'puppetmaster-04.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.247.78',
-                    'puppet': '10.130.247.78',
-                    'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.75.122'
-                },
-            'buildbot_master': '10.12.48.14:9049',
-            'buildslave_password': 'pass',
-            }
+    instance_data = json.load(open(options.instance_data))
     if options.instance_id:
         conn = connect_to_region(options.region,
                 aws_access_key_id=secrets['aws_access_key_id'],

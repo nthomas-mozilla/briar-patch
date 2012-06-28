@@ -70,7 +70,7 @@ def aws_resume_instances(instance_type, count, regions, secrets):
 
     return started
 
-def aws_create_instances(instance_type, count, regions, secrets):
+def aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data):
     max_count = max_instances[instance_type]
 
     # Count how many we have in all regions
@@ -103,11 +103,12 @@ def aws_create_instances(instance_type, count, regions, secrets):
 
     # TODO do multi-region
     if to_create:
-        make_instances(to_create, instance_type, regions[0], secrets)
+        config = json.load(open("configs/%s" % instance_type))
+        make_instances(to_create, config, regions[0], secrets, key_nane, instance_data, create_ami=False)
 
     return len(to_create)
 
-def aws_watch_pending(db, regions, secrets):
+def aws_watch_pending(db, regions, secrets, key_name, instance_data):
     # First find pending jobs in the db
     pending = find_pending(db)
 
@@ -133,7 +134,7 @@ def aws_watch_pending(db, regions, secrets):
         log.debug("Started %i instances; need %i", started, count)
 
         # Then create new instances (subject to max_instances)
-        created = aws_create_instances(instance_type, count, regions, secrets)
+        created = aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data)
         count -= created
         log.debug("Created %i instances; need %i", created, count)
 
@@ -145,12 +146,16 @@ if __name__ == '__main__':
             secrets=None,
             db=None,
             loglevel=logging.INFO,
+            key_name=None,
+            instance_data=None,
             )
 
     parser.add_option("-r", "--region", action="append", dest="regions")
     parser.add_option("-k", "--secrets", dest="secrets")
+    parser.add_option("-s", "--key-name", dest="key_name")
     parser.add_option("--db", dest="db")
     parser.add_option("-v", "--verbose", action="store_const", dest="loglevel", const=logging.DEBUG)
+    parser.add_option("-i", "--instance-data", dest="instance_data")
 
     options, args = parser.parse_args()
 
@@ -163,8 +168,12 @@ if __name__ == '__main__':
     if not options.secrets:
         parser.error("secrets are required")
 
+    if not options.instance_data:
+        parser.error("instance data is required")
+
     if not options.db:
         parser.error("you must specify a database to use")
 
     secrets = json.load(open(options.secrets))
-    aws_watch_pending(options.db, options.regions, secrets)
+    instance_data = json.load(open(options.instance_data))
+    aws_watch_pending(options.db, options.regions, secrets, options.key_name, instance_data)
