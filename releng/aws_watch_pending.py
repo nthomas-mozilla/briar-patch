@@ -104,7 +104,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
     # TODO do multi-region
     if to_create:
         config = json.load(open("configs/%s" % instance_type))
-        make_instances(to_create, config, regions[0], secrets, key_nane, instance_data, create_ami=False)
+        make_instances(to_create, config, regions[0], secrets, key_name, instance_data, create_ami=False)
 
     return len(to_create)
 
