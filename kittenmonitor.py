@@ -17,7 +17,7 @@
         -r --redis          Redis server connection string
                             default: localhost:6379
            --redisdb        Redis database ID
-                            default: 8
+                            default: 10
         -d --debug          Turn on debug logging
                             default: False
 
@@ -252,7 +252,7 @@ def gatherData(db, dToday, dHour):
         for key in dashboard:
             db.hset(dKey, key, dashboard[key])
 
-    dKeyQC = 'dashboard:queue_collapses:%s.%s' % (dToday, dHour)
+    dKeyQC = 'dashboard:%s.%s:queue_collapses' % (dToday, dHour)
     for key in platforms:
         db.hset(dKeyQC, key.lower(), platforms[key])
     db.hset(dKeyQC, 'total', dashboard['collapses'])
@@ -313,26 +313,26 @@ def awsUpdate(options):
                                    'ipPrivate':    instance.private_ip_address,
                                  }
                     for tag in instance.tags.keys():
-                        currStatus[tag] = instance.tags[tag]
+                        currStatus[tag.lower()] = instance.tags[tag]
 
-                    hostKey = '%s:%s:%s' % (farm, currStatus['Name'], currStatus['id'])
+                    hostKey = '%s:%s:%s' % (farm, currStatus['name'], currStatus['id'])
                     farmKey = 'farm:%s' % farm
 
                     print hostKey, farmKey, currStatus['moz-state']
 
                     db.sadd(farmKey, hostKey)
 
-                    if 'ec2' in currStatus['Name'].lower():
+                    if 'ec2' in currStatus['name'].lower():
                         if farm not in current:
                             current[farm] = []
                         current[farm].append(hostKey)
 
                         if currStatus['state'] == 'running':
-                            db.sadd('%s:active'   % farm, hostKey)
-                            db.srem('%s:inactive' % farm, hostKey)
+                            db.sadd('%s:active'   % farmKey, hostKey)
+                            db.srem('%s:inactive' % farmKey, hostKey)
                         else:
-                            db.sadd('%s:inactive' % farm, hostKey)
-                            db.srem('%s:active'   % farm, hostKey)
+                            db.sadd('%s:inactive' % farmKey, hostKey)
+                            db.srem('%s:active'   % farmKey, hostKey)
 
                     prevStatus = db.hgetall(hostKey)
 
@@ -346,19 +346,18 @@ def awsUpdate(options):
                     pipe.execute()
 
         for farm in current.keys():
-            for key in db.smembers('%s:active' % farm):
+            for key in db.smembers('%s:active' % farmKey):
                 if key not in current[farm]:
-                    db.sadd('%s:inactive' % farm, key)
-                    db.srem('%s:active'   % farm, key)
-
+                    db.sadd('%s:inactive' % farmKey, key)
+                    db.srem('%s:active'   % farmKey, key)
 
 
 _defaultOptions = { 'config':  ('-c', '--config',  None,             'Configuration file'),
-                    'debug':   ('-d', '--debug',   True,             'Enable Debug', 'b'),
+                    'debug':   ('-d', '--debug',   True,             'Enable Debug'),
                     'logpath': ('-l', '--logpath', None,             'Path where log file is to be written'),
                     'redis':   ('-r', '--redis',   'localhost:6379', 'Redis connection string'),
-                    'redisdb': ('',   '--redisdb', '8',              'Redis database'),
-                    'email':   ('-e', '--email',   False,            'send result email', 'b'),
+                    'redisdb': ('',   '--redisdb', '10',             'Redis database'),
+                    'email':   ('-e', '--email',   False,            'send result email'),
                     'region':  ('',   '--region' , 'us-west-1',      'EC2 Region'),
                     }
 
@@ -371,6 +370,10 @@ if __name__ == '__main__':
     db = dbRedis(options)
 
     awsUpdate(options)
+
+    options.redisdb = 8 # metrics data
+
+    db = dbRedis(options)
 
     tdHour  = timedelta(hours=-1)
     dGather = datetime.now()

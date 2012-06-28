@@ -124,7 +124,6 @@ def puppetize(instance, name, options):
     log.info("Got %s", addr)
     conn.associate_address(instance.id, allocation_id=addr.allocation_id)
 
-
 # TODO: Move this into separate file(s)
 configs =  {
     "centos-6-x86_64-base": {
@@ -160,9 +159,9 @@ if __name__ == '__main__':
                       help="puppet repo directory")
     parser.add_option("--ca", dest="puppetca", action="store_true",
                       help="setup puppet CA")
-    parser.add_option("--puppet-ca-hostname", dest="puppetca_hostname",
+    parser.add_option("--puppetca-hostname", dest="puppetca_hostname",
                       help="puppet CA hostname")
-    parser.add_option("--puppet-ca-ip", dest="puppetca_ip",
+    parser.add_option("--puppetca-ip", dest="puppetca_ip",
                       help="puppet CA ip")
 
     options, args = parser.parse_args()
@@ -184,6 +183,15 @@ if __name__ == '__main__':
     if not options.puppet_dir:
         parser.error("puppet directory is required")
 
+    if not options.key_name:
+        parser.error("ssh key name is required")
+
+    if not options.puppetca and not options.puppetca_hostname:
+        parser.error("puppetca hostname is required when setting up puppet master")
+
+    if not options.puppetca and not options.puppetca_ip:
+        parser.error("puppetca ip address is required when setting up puppet master")
+
     secrets = json.load(open(options.secrets))
     conn = connect_to_region(options.region,
             aws_access_key_id=secrets['aws_access_key_id'],
@@ -192,7 +200,7 @@ if __name__ == '__main__':
 
     if options.instance:
         instance = conn.get_all_instances([options.instance])[0].instances[0]
-        puppetize(instance, args[0])
+        puppetize(instance, args[0], options)
         raise SystemExit(0)
 
     if not options.config:

@@ -73,7 +73,8 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     # Start buildbot
     run("/etc/init.d/buildbot start")
 
-def create_instance(name, config, region, secrets, key_name, create_ami=False):
+def create_instance(name, config, region, secrets, key_name, instance_data,
+                    create_ami=False):
     """Creates an AMI instance with the given name and config. The config must specify things like ami id."""
     conn = connect_to_region(region,
             aws_access_key_id=secrets['aws_access_key_id'],
@@ -83,22 +84,10 @@ def create_instance(name, config, region, secrets, key_name, create_ami=False):
     # Make sure we don't request the same things twice
     token = str(uuid.uuid4())[:16]
 
-    instance_data = {
-            'hosts':
-                {
-                    'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.104.67',
-                    'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.71.90',
-                    'puppet': '10.130.71.90',
-                    'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
-                    '10.130.75.122'
-                },
-            'name': name,
-            'buildbot_master': '10.12.48.14:9049',
-            'buildslave_password': 'pass',
-            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
-            }
+    instance_data = instance_data.copy()
+    instance_data['name'] = name
+    instance_data['hostname'] = '{name}.build.aws-{region}.mozilla.com'.format(
+        name=name, region=region)
 
     bdm = None
     if 'device_map' in config:
@@ -214,15 +203,15 @@ class LoggingProcess(multiprocessing.Process):
         sys.stderr = output
         return super(LoggingProcess, self).run()
 
-def make_instances(names, config_name, region, secrets, key_name, create_ami):
+def make_instances(names, config, region, secrets, key_name, instance_data,
+                   create_ami):
     """Create instances for each name of names for the given configuration"""
     procs = []
-    config = configs[config_name][region]
     for name in names:
         p = LoggingProcess(log="{name}.log".format(name=name),
                            target=create_instance,
                            args=(name, config, region, secrets, key_name,
-                                 create_ami),
+                                 instance_data, create_ami),
                            )
         p.start()
         procs.append(p)
@@ -231,54 +220,6 @@ def make_instances(names, config_name, region, secrets, key_name, create_ami):
     for p in procs:
         p.join()
 
-# TODO: Move this into separate file(s)
-configs =  {
-    "rhel6-mock": {
-        "us-west-1": {
-            "type": "rhel6-mock",
-            "ami": "ami-250e5060", # RHEL-6.2-Starter-EBS-x86_64-4-Hourly2
-            "subnet_id": "subnet-59e94330",
-            "security_group_ids": [],
-            "instance_type": "c1.xlarge",
-            "device_map": {
-                "/dev/sda1": {
-                    "size": 50,
-                    "instance_dev": "/dev/xvde1",
-                },
-            },
-        },
-    },
-    "centos-6-x86_64-base": {
-        "us-west-1": {
-            "type": "centos-6-x86_64-base",
-            "ami": "ami-696f4a2c",
-            "subnet_id": "subnet-59e94330",
-            "security_group_ids": [],
-            "instance_type": "c1.xlarge",
-            "device_map": {
-                "/dev/sda1": {
-                    "size": 5,
-                    "instance_dev": "/dev/xvde1",
-                },
-            },
-        },
-    },
-    "centos-6-x86_64-base-puppetized": {
-        "us-west-1": {
-            "type": "centos-6-x86_64-base-puppetized",
-            "ami": "ami-7d567338",
-            "subnet_id": "subnet-59e94330",
-            "security_group_ids": [],
-            "instance_type": "c1.xlarge",
-            "device_map": {
-                "/dev/sda1": {
-                    "size": 50,
-                    "instance_dev": "/dev/xvde1",
-                },
-            },
-        },
-    },
-}
 
 if __name__ == '__main__':
     from optparse import OptionParser
@@ -290,24 +231,20 @@ if __name__ == '__main__':
             key_name=None,
             action="create",
             create_ami=False,
+            instance_id=None,
             )
     parser.add_option("-c", "--config", dest="config", help="instance configuration to use")
     parser.add_option("-r", "--region", dest="region", help="region to use")
     parser.add_option("-k", "--secrets", dest="secrets", help="file where secrets can be found")
     parser.add_option("-s", "--key-name", dest="key_name", help="SSH key name")
     parser.add_option("-l", "--list", dest="action", action="store_const", const="list", help="list available configs")
+    parser.add_option("-i", "--instnace", dest="instance_id", help="assimilate existing instance")
     parser.add_option("--create-ami", dest="create_ami", action="store_true",
                       help="create AMI from instance")
 
     options, args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-
-    if options.action == "list":
-        for config, regions in configs.items():
-            print config, regions.keys()
-        # All done!
-        raise SystemExit(0)
 
     if not args:
         parser.error("at least one instance name is required")
@@ -322,10 +259,38 @@ if __name__ == '__main__':
         parser.error("SSH key name name is required")
 
     try:
-        config = configs[options.config][options.region]
+        config = json.load(open(options.config))[options.region]
     except KeyError:
-        parser.error("unknown configuration; run with --list for list of supported configs")
+        parser.error("unknown configuration")
 
     secrets = json.load(open(options.secrets))
-    make_instances(args, options.config, options.region, secrets,
-                   options.key_name, options.create_ami)
+
+    instance_data = {
+            'hosts':
+                {
+                    'puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.104.67',
+                    'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.71.90',
+                    'puppet': '10.130.71.90',
+                    'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.75.122'
+                },
+            'buildbot_master': '10.12.48.14:9049',
+            'buildslave_password': 'pass',
+            'hostname': '{name}.build.aws-{region}.mozilla.com'.format(name=name, region=region),
+            'name': name,
+            }
+    if options.instance_id:
+        conn = connect_to_region(options.region,
+                aws_access_key_id=secrets['aws_access_key_id'],
+                aws_secret_access_key=secrets['aws_secret_access_key'],
+                )
+        instance = conn.get_all_instances([options.instance_id])[0].instances[0]
+        instance_data['name'] = args[0]
+        instance_data['hostname'] = '{name}.build.aws-{region}.mozilla.com'.format(
+            name=args[0], region=options.region)
+        assimilate(instance.private_ip_address, config, instance_data, False)
+    else:
+        make_instances(args, config, options.region, secrets, options.key_name,
+                       instance_data, options.create_ami)

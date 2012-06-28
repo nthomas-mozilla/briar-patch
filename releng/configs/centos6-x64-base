@@ -1,0 +1,15 @@
+{
+    "us-west-1": {
+        "type": "centos-6-x86_64-base",
+        "ami": "ami-696f4a2c",
+        "subnet_id": "subnet-59e94330",
+        "security_group_ids": [],
+        "instance_type": "c1.xlarge",
+        "device_map": {
+            "/dev/sda1": {
+                "size": 5,
+                "instance_dev": "/dev/xvde1"
+            }
+        }
+    }
+}
