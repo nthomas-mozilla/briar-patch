@@ -59,7 +59,7 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     with settings(warn_only=True):
         result = run("puppetd --onetime --no-daemonize --verbose "
                      "--detailed-exitcodes --waitforcert 10 "
-                    "--server puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com "
+                    "--server puppetmaster-04.srv.releng.aws-us-west-1.mozilla.com "
                     "--ca_server puppetca-02.srv.releng.aws-us-west-1.mozilla.com")
         assert result.return_code in (0,2)
 
@@ -272,7 +272,9 @@ if __name__ == '__main__':
                     '10.130.104.67',
                     'puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com':
                     '10.130.71.90',
-                    'puppet': '10.130.71.90',
+                    'puppetmaster-04.srv.releng.aws-us-west-1.mozilla.com':
+                    '10.130.247.78',
+                    'puppet': '10.130.247.78',
                     'puppetca-02.srv.releng.aws-us-west-1.mozilla.com':
                     '10.130.75.122'
                 },
