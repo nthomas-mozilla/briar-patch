@@ -88,9 +88,9 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
                     num += 1
 
     num_to_create = min(max_count - num, count)
-    log.debug("We have %i instances across all regions; we will create %i more (max is %i)", num, num_to_create, max_count)
+    log.info("We have %i instances across all regions; we will create %i more (max is %i)", num, num_to_create, max_count)
 
-    i = 0
+    i = 1
     to_create = []
     while len(to_create) < num_to_create:
         # Figure out its names
@@ -99,11 +99,11 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
             to_create.append(name)
         i += 1
 
-    log.debug("Creating %s", to_create)
+    log.info("Creating %s", to_create)
 
     # TODO do multi-region
     if to_create:
-        config = json.load(open("configs/%s" % instance_type))
+        config = json.load(open("configs/%s" % instance_type))[regions[0]]
         make_instances(to_create, config, regions[0], secrets, key_name, instance_data, create_ami=False)
 
     return len(to_create)
@@ -131,12 +131,12 @@ def aws_watch_pending(db, regions, secrets, key_name, instance_data):
         # Check for stopped instances in the given regions and start them if there are any
         started = aws_resume_instances(instance_type, count, regions, secrets)
         count -= started
-        log.debug("Started %i instances; need %i", started, count)
+        log.info("Started %i instances; need %i", started, count)
 
         # Then create new instances (subject to max_instances)
         created = aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data)
         count -= created
-        log.debug("Created %i instances; need %i", created, count)
+        log.info("Created %i instances; need %i", created, count)
 
 if __name__ == '__main__':
     from optparse import OptionParser
