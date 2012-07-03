@@ -596,12 +596,12 @@ class RemoteEnvironment():
                                                  'current_master': None,
                                                  'notes': '',
                                                  }
-                        if item in self.db.smembers('farm:ec2:active'):
-                            for key in ('farm', 'moz-state', 'image_id', 'id', 'ipPrivate', 'region', 'state', 'launchTime'):
-                                self.hosts[hostname][key] = instance[key]
-                            self.hosts[hostname]['distro']  = instance['moz-type']
-                            self.hosts[hostname]['enabled'] = instance['moz-state'] == 'ready'
-                            self.hosts[hostname]['ip']      = instance['ipPrivate']
+                        for key in ('farm', 'moz-state', 'image_id', 'id', 'ipPrivate', 'region', 'state', 'launchTime'):
+                            self.hosts[hostname][key] = instance[key]
+
+                        self.hosts[hostname]['distro']  = instance['moz-type']
+                        self.hosts[hostname]['enabled'] = instance['moz-state'] == 'ready'
+                        self.hosts[hostname]['ip']      = instance['ipPrivate']
 
     def getHost(self, hostname, verbose=False):
         if 'w32-ix' in hostname or 'mw32-ix' in hostname or \
@@ -625,7 +625,7 @@ class RemoteEnvironment():
 
         elif 'moz2-linux' in hostname or 'linux-ix' in hostname or \
              'try-linux' in hostname or 'linux64-ix-' in hostname or \
-             'bld-centos6' in hostname:
+             'bld-centos' in hostname:
             result = LinuxBuildHost(hostname, self, verbose=verbose)
 
         elif 'try-mac' in hostname or 'xserve' in hostname or \
