@@ -131,7 +131,7 @@ configs =  {
             "subnet_id": "subnet-59e94330",
             "security_group_ids": ["sg-38150854"],
             "instance_type": "c1.medium",
-            "repo_snapshot_id": "snap-bae7e2dd", # This will be mounted at /data
+            "repo_snapshot_id": "snap-7c61a71a", # This will be mounted at /data
         },
     },
 }
