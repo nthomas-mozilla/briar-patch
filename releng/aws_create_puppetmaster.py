@@ -101,7 +101,6 @@ def puppetize(instance, name, options):
         "/etc/puppet/production/manifests/%s.pp" % flavour)
     run("echo 127.0.0.1 {name}.srv.releng.aws-{region}.mozilla.com >> /etc/hosts".format(
         name=name, region=options.region))
-    #run("/sbin/chkconfig puppet off")
     if options.puppetca_hostname and options.puppetca_ip:
         puppetca_fqdn = "{name}.srv.releng.aws-{region}.mozilla.com".format(
             name=options.puppetca_hostname, region=options.region)
