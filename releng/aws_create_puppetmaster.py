@@ -116,6 +116,10 @@ def puppetize(instance, name, options):
                 "--waitforcert 10 --dns_alt_names puppet "
                 "--server {puppetca_fqdn} || :".format(
                     puppetca_fqdn=puppetca_fqdn))
+            # TODO: the following hack should be managed by puppet. The current
+            # implementation replaces stock /etc/init.d/puppet with a custom
+            # one.
+            run('/sbin/chkconfig puppet on')
     instance.add_tag('moz-state', 'ready')
 
     #log.info("Creating EIP and associating")
@@ -123,6 +127,8 @@ def puppetize(instance, name, options):
     #log.info("Got %s", addr)
     #conn.associate_address(instance.id, allocation_id=addr.allocation_id)
     log.info("Got %s", instance.private_ip_address)
+    log.info("rebooting")
+    run("reboot")
 
 # TODO: Move this into separate file(s)
 configs =  {

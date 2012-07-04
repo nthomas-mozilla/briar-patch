@@ -59,8 +59,9 @@ def assimilate(ip_addr, config, instance_data, create_ami):
     with settings(warn_only=True):
         result = run("puppetd --onetime --no-daemonize --verbose "
                      "--detailed-exitcodes --waitforcert 10 "
-                    "--server puppetmaster-06.srv.releng.aws-us-west-1.mozilla.com "
-                    "--ca_server puppetca-03.srv.releng.aws-us-west-1.mozilla.com")
+                    "--server {puppet} --ca_server {puppetca}".format(
+                        puppet=instance_data['default_puppet_server'],
+                        puppetca=instance_data['puppetca']))
         assert result.return_code in (0,2)
 
     if create_ami:
