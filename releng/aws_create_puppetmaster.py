@@ -118,10 +118,11 @@ def puppetize(instance, name, options):
                     puppetca_fqdn=puppetca_fqdn))
     instance.add_tag('moz-state', 'ready')
 
-    log.info("Creating EIP and associating")
-    addr = conn.allocate_address("vpc")
-    log.info("Got %s", addr)
-    conn.associate_address(instance.id, allocation_id=addr.allocation_id)
+    #log.info("Creating EIP and associating")
+    #addr = conn.allocate_address("vpc")
+    #log.info("Got %s", addr)
+    #conn.associate_address(instance.id, allocation_id=addr.allocation_id)
+    log.info("Got %s", instance.private_ip_address)
 
 # TODO: Move this into separate file(s)
 configs =  {
