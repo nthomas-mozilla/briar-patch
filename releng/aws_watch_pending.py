@@ -75,7 +75,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
                     num += 1
 
     num_to_create = min(max_count - num, count)
-    log.info("We have %i instances across all regions; we will create %i more (max is %i)", num, num_to_create, max_count)
+    log.info("%s - we have %i instances across all regions; we will create %i more (max is %i)", instance_type, num, num_to_create, max_count)
 
     i = 1
     to_create = []
@@ -86,7 +86,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
             to_create.append(name)
         i += 1
 
-    log.info("Creating %s", to_create)
+    log.info("%s - creating %s", instance_type, to_create)
 
     # TODO do multi-region
     if to_create:
@@ -117,12 +117,12 @@ def aws_watch_pending(db, regions, secrets, key_name, instance_data, builder_map
         # Check for stopped instances in the given regions and start them if there are any
         started = aws_resume_instances(instance_type, count, regions, secrets)
         count -= started
-        log.info("Started %i instances; need %i", started, count)
+        log.info("%s - started %i instances; need %i", instance_type, started, count)
 
         # Then create new instances (subject to max_instances)
         created = aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data)
         count -= created
-        log.info("Created %i instances; need %i", created, count)
+        log.info("%s - created %i instances; need %i", instance_type, created, count)
 
 if __name__ == '__main__':
     from optparse import OptionParser
