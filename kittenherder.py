@@ -37,6 +37,7 @@ import datetime
 import smtplib
 import email.utils
 
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from multiprocessing import Process, Queue, get_logger
 from Queue import Empty
@@ -70,7 +71,7 @@ _defaultOptions = { 'kittens':    ('-k', '--kittens',    None,     'farm keyword
                   }
 
 
-def generate(hostlist, tag, indent=''):
+def generateTextList(hostlist, tag, indent=''):
     s = '\r\n%s\r\n' % tag
     t = ''
     m = []
@@ -95,10 +96,7 @@ def previouslySeen(hostlist, lastrun):
             l.append(kitten)
             hostlist.remove(kitten)
 
-    if len(l) > 0:
-        result = generate(l, 'previously seen', '    ')
-
-    return result
+    return l
 
 def getHistory(kitten):
     result = ''
@@ -125,6 +123,109 @@ def getHistory(kitten):
 #                     'tacfile': '', 'pdu': False, 'fqdn': 'bm-xserve20.build.sjc1.mozilla.com.', 'reboot': False, 'reachable': False, 'lastseen': None,
 #                     'buildbot': '', 'master': ''}
 
+def HTMLEmailHeader(title):
+    header =  """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>"""
+    header += title
+    header += """</title>
+<link rel="stylesheet" href="http://build.mozilla.org/builds/kitten_mail.css" />
+</head>
+
+<body>
+"""
+    header += '<h1>%s</h1>' % title
+    return header
+
+def HTMLEmailFooter():
+    return """
+<hr/>
+<p class="center"><a href="http://build.mozilla.org/builds/last-job-per-slave.html">last job per slave</a> | <a href="http://slavealloc.build.mozilla.org/ui/">slavealloc</a></p>
+
+</body>
+</html>
+
+"""
+
+def getPlatform(kitten):
+    if 'try-mac64' in kitten or \
+       'talos-r4-snow-' in kitten or \
+       'lion' in kitten or \
+       'centos5-64' in kitten or \
+       'centos6' in kitten or \
+       'linux64' in kitten or \
+       'talos-r3-fed64-' in kitten or \
+       'w64' in kitten or \
+       'w764' in kitten:
+        return 'x86_64'
+    elif 'mw32' in kitten or \
+         'moz2-darwin10' in kitten or \
+         'centos5-32' in kitten or \
+         'linux-ix' in kitten or \
+         'talos-r3-fed-' in kitten or \
+         'talos-r3-leopard' in kitten or \
+         'talos-r3-w7-' in kitten or \
+         'talos-r3-xp-' in kitten:
+        return 'x86'    
+    elif 'tegra' in kitten:
+        return 'ARM'
+    else:
+        return ''
+
+def getOS(kitten):
+    if 'try-mac64' in kitten or \
+       'lion' in kitten or \
+       'moz2-darwin10' in kitten or \
+       'talos-r3-leopard' in kitten or \
+       'talos-r4-snow-' in kitten:
+        return 'Mac%20OS%20X'
+    elif 'centos' in kitten or \
+         'linux' in kitten or \
+         'talos-r3-fed' in kitten:
+        return 'Linux'
+    elif 'w64' in kitten:
+        return 'Windows%20Server%202008'
+    elif 'w7' in kitten:
+        return 'Windows%207'
+    elif 'xp' in kitten:
+        return 'Windows%20XP'
+    elif 'tegra' in kitten:
+        return 'Android'
+    else:
+        return ''
+
+def getTemplateLink(kitten):
+    platform = getPlatform(kitten)
+    os       = getOS(kitten)
+    link = '<a href="https://bugzilla.mozilla.org/enter_bug.cgi?alias=' + kitten + '&assigned_to=nobody%40mozilla.org&bug_severity=normal&bug_status=NEW&component=Release%20Engineering%3A%20Machine%20Management&contenttypemethod=autodetect&contenttypeselection=text%2Fplain&data=&defined_groups=1&flag_type-4=X&flag_type-481=X&flag_type-607=X&flag_type-674=X&flag_type-720=X&flag_type-721=X&flag_type-737=X&flag_type-775=X&flag_type-780=X&form_name=enter_bug&keywords=&maketemplate=Remember%20values%20as%20bookmarkable%20template&op_sys=' + os + '&priority=--&product=mozilla.org&qa_contact=armenzg%40mozilla.com&rep_platform=' + platform + '&requestee_type-4=&requestee_type-607=&requestee_type-753=&short_desc=' + kitten + '%20problem%20tracking&status_whiteboard=%5Bbuildduty%5D%5Bbuildslave%5D%5Bcapacity%5D&version=other">File new bug</a>'
+    return link
+
+def formatHTMLResults(table_header, kitten_list):
+    results = """
+<table cellpadding="0" cellspacing="0" width="620" class="body">
+<tr>
+"""
+    results += '<th colspan="3">%s</th>\n' % table_header
+    results += '</tr>\n'
+
+    row_class = 'odd'
+    for kitten in kitten_list:        
+        results += '<tr class="%s"><td>%s</td>\n' % (row_class,kitten)
+        results += '<td><a href="https://bugzilla.mozilla.org/show_bug.cgi?id=%s">Check Existing Bug</a></td>\n' % kitten
+        results += '<td>' + getTemplateLink(kitten) + '</td>\n'
+        results += '</tr>\n'
+        if row_class == 'odd':
+            row_class = 'even'
+        else:
+            row_class = 'odd'
+    results += '</table>'
+    return results
+
+def addHTMLLineBreak():
+    return '<br/>'
+
 def sendEmail(data, smtpServer=None):
     if len(data) > 0:
         rebootedOS   = []
@@ -134,6 +235,7 @@ def sendEmail(data, smtpServer=None):
         idle         = []
         neither      = []
         body         = ''
+        html_body    = ''
 
         lastRun = db.lrange('kittenherder:lastrun', 0, -1)
         db.ltrim('kittenherder:lastrun', 0, 0)
@@ -162,40 +264,60 @@ def sendEmail(data, smtpServer=None):
 
         if len(idle) > 0:
             body += '\r\nbored kittens\r\n    %s\r\n' % ', '.join(idle)
-
+            html_body += formatHTMLResults('bored kittens', idle)
+            html_body += addHTMLLineBreak()
+    
         if len(rebootedOS) > 0:
             prevSeen = previouslySeen(rebootedOS, lastRun)
-            body += generate(rebootedOS, 'rebooted (SSH)')
-            body += prevSeen
+            body += generateTextList(rebootedOS, 'rebooted (SSH)')
+            body += generateTextList(prevSeen, 'rebooted (SSH): previously seen', '    ')
+            html_body += formatHTMLResults('rebooted (SSH)', rebootedOS)
+            html_body += formatHTMLResults('rebooted (SSH): previously seen', prevSeen)
+            html_body += addHTMLLineBreak()
 
         if len(rebootedPDU) > 0:
             prevSeen = previouslySeen(rebootedPDU, lastRun)
-            body += generate(rebootedPDU, 'rebooted (PDU)')
-            body += prevSeen
+            body += generateTextList(rebootedPDU, 'rebooted (PDU)')
+            body += generateTextList(prevSeen, 'rebooted (PDU): previously seen', '    ')
+            html_body += formatHTMLResults('rebooted (PDU)', rebootedPDU)
+            html_body += formatHTMLResults('rebooted (PDU): previously seen', prevSeen)
+            html_body += addHTMLLineBreak()
 
         if len(rebootedIPMI) > 0:
             prevSeen = previouslySeen(rebootedIPMI, lastRun)
-            body += generate(rebootedIPMI, 'rebooted (IPMI)')
-            body += prevSeen
+            body += generateTextList(rebootedIPMI, 'rebooted (IPMI)')
+            body += generateTextList(prevSeen, 'rebooted (IPMI): previously seen', '    ')
+            html_body += formatHTMLResults('rebooted (IPMI)', rebootedIPMI) 
+            html_body += formatHTMLResults('rebooted (IPMI): previously seen', prevSeen)
+            html_body += addHTMLLineBreak()
 
         if len(recovered) > 0:
             body += '\r\nrecovery needed\r\n'
             for kitten in recovered:
                 body += '%s\r\n%s' % (kitten, getHistory(kitten))
+            html_body += formatHTMLResults('recovery needed', recovered)
+            html_body += addHTMLLineBreak()
 
         if len(neither) > 0:
             body += '\r\nbear needs to look into these\r\n    %s\r\n' % ', '.join(neither)
 
         if len(body) > 0:
-            addr = 'release@mozilla.com'
-            msg  = MIMEText(body)
+            addr = 'release@mozilla.com'                                     
+            msg = MIMEMultipart('alternative') 
 
             msg.set_unixfrom('briarpatch')
             msg['To']      = email.utils.formataddr(('RelEng',     addr))
             msg['From']    = email.utils.formataddr(('briarpatch', addr))
             msg['Subject'] = '[briar-patch] idle kittens report'
 
-            print body
+            textPart = MIMEText(body, 'plain')                                
+            htmlPart = MIMEText(HTMLEmailHeader('[briar-patch] idle kittens report') + \
+                                html_body + \
+                                HTMLEmailFooter(), 'html')
+
+            msg.attach(textPart)                                              
+            msg.attach(htmlPart)
+
             if smtpServer is not None:
                 server = smtplib.SMTP(smtpServer)
                 server.set_debuglevel(True)
@@ -258,14 +380,17 @@ def processKittens(options, jobs, results):
                             log.info('%s: %s' % (job, json.dumps(r)))
 
                             if (host.farm == 'ec2') and (r['reboot'] or r['recovery']):
-                                log.info('shutting down ec2 instance')
-                                try:
-                                    conn = connect_to_region(host.info['region'],
-                                                             aws_access_key_id=getPassword('aws_access_key_id'),
-                                                             aws_secret_access_key=getPassword('aws_secret_access_key'))
-                                    conn.stop_instances(instance_ids=[host.info['id'],])
-                                except:
-                                    log.error('unable to stop ec2 instance %s [%s]' % (job, host.info['id']), exc_info=True)
+                                if host.info['enabled'] and host.info['state'] == 'ready':
+                                    log.info('shutting down ec2 instance')
+                                    try:
+                                        conn = connect_to_region(host.info['region'],
+                                                                 aws_access_key_id=getPassword('aws_access_key_id'),
+                                                                 aws_secret_access_key=getPassword('aws_secret_access_key'))
+                                        conn.stop_instances(instance_ids=[host.info['id'],])
+                                    except:
+                                        log.error('unable to stop ec2 instance %s [%s]' % (job, host.info['id']), exc_info=True)
+                                else:
+                                    log.error('ec2 instance flagged for reboot/recovery but it is not running')
                 else:
                     if options.verbose:
                         log.info('%s not in requested environment %s (%s), skipping' % (job, options.environ, info['environment']))

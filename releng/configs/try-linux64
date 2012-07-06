@@ -1,9 +1,9 @@
 {
     "max_instances": 50,
     "min_running_instances": 2,
-    "hostname": "bld-linux64-ec2-%03d",
+    "hostname": "try-linux64-ec2-%03d",
     "us-west-1": {
-        "type": "bld-linux64",
+        "type": "try-linux64",
         "ami": "ami-7d567338",
         "subnet_id": "subnet-59e94330",
         "security_group_ids": [],
