@@ -94,7 +94,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
 
     return len(to_create)
 
-def aws_watch_pending(db, regions, secrets, key_name, instance_data, builder_map):
+def aws_watch_pending(db, regions, secrets, key_name, instance_data, builder_map, allow_create):
     # First find pending jobs in the db
     pending = find_pending(db)
 
@@ -120,9 +120,10 @@ def aws_watch_pending(db, regions, secrets, key_name, instance_data, builder_map
         log.info("%s - started %i instances; need %i", instance_type, started, count)
 
         # Then create new instances (subject to max_instances)
-        created = aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data)
-        count -= created
-        log.info("%s - created %i instances; need %i", instance_type, created, count)
+        if allow_create:
+            created = aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data)
+            count -= created
+            log.info("%s - created %i instances; need %i", instance_type, created, count)
 
 if __name__ == '__main__':
     from optparse import OptionParser
@@ -134,6 +135,7 @@ if __name__ == '__main__':
             key_name=None,
             instance_data=None,
             config=None,
+            allow_create=False,
             )
 
     parser.add_option("-r", "--region", action="append", dest="regions")
@@ -142,10 +144,11 @@ if __name__ == '__main__':
     parser.add_option("-v", "--verbose", action="store_const", dest="loglevel", const=logging.DEBUG)
     parser.add_option("-i", "--instance-data", dest="instance_data")
     parser.add_option("-c", "--config", dest="config")
+    parser.add_option("--allow-create", dest="allow_create", action="store_true")
 
     options, args = parser.parse_args()
 
-    logging.basicConfig(level=options.loglevel)
+    logging.basicConfig(level=options.loglevel, format="%(asctime)s - %(message)s")
     logging.getLogger("boto").setLevel(logging.INFO)
 
     if not options.regions:
@@ -163,4 +166,6 @@ if __name__ == '__main__':
     config = json.load(open(options.config))
     secrets = json.load(open(options.secrets))
     instance_data = json.load(open(options.instance_data))
-    aws_watch_pending(config['db'], options.regions, secrets, options.key_name, instance_data, config['buildermap'])
+    aws_watch_pending(
+            config['db'], options.regions, secrets, options.key_name,
+            instance_data, config['buildermap'], options.allow_create)
