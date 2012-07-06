@@ -69,7 +69,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
         reservations = conn.get_all_instances(filters={'tag:moz-type': instance_type})
         for r in reservations:
             for i in r.instances:
-                if i.tags.get('moz-type') == instance_type:
+                if i.tags.get('moz-type') == instance_type and i.state != "terminated":
                     instances.append(i)
                     names.append(i.tags['Name'])
                     num += 1
@@ -90,7 +90,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
 
     # TODO do multi-region
     if to_create:
-        make_instances(to_create, config, regions[0], secrets, key_name, instance_data, create_ami=False)
+        make_instances(to_create, instance_config[regions[0]], regions[0], secrets, key_name, instance_data, create_ami=False)
 
     return len(to_create)
 
