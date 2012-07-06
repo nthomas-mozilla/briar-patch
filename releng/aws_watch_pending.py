@@ -17,20 +17,6 @@ from aws_create_instance import make_instances
 import logging
 log = logging.getLogger()
 
-# Mapping of builder names to ec2 instance types
-# TODO: move to external file
-builder_map = {
-        "B2G.*": "bld-linux64",
-        }
-
-max_instances = {
-        'bld-linux64': 11,
-        }
-
-instance_names = {
-        'bld-linux64': 'bld-linux64-ec2-%03d',
-        }
-
 def find_pending(db):
     engine = sa.create_engine(db)
     result = engine.execute(sa.text("""
@@ -71,7 +57,8 @@ def aws_resume_instances(instance_type, count, regions, secrets):
     return started
 
 def aws_create_instances(instance_type, count, regions, secrets, key_name, instance_data):
-    max_count = max_instances[instance_type]
+    instance_config = json.load(open("configs/%s" % instance_type))
+    max_count = instance_config['max_instances']
 
     # Count how many we have in all regions
     num = 0
@@ -94,7 +81,7 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
     to_create = []
     while len(to_create) < num_to_create:
         # Figure out its names
-        name = instance_names[instance_type] % i
+        name = instance_config['hostname'] % i
         if name not in names and name not in to_create:
             to_create.append(name)
         i += 1
@@ -103,12 +90,11 @@ def aws_create_instances(instance_type, count, regions, secrets, key_name, insta
 
     # TODO do multi-region
     if to_create:
-        config = json.load(open("configs/%s" % instance_type))
         make_instances(to_create, config, regions[0], secrets, key_name, instance_data, create_ami=False)
 
     return len(to_create)
 
-def aws_watch_pending(db, regions, secrets, key_name, instance_data):
+def aws_watch_pending(db, regions, secrets, key_name, instance_data, builder_map):
     # First find pending jobs in the db
     pending = find_pending(db)
 
@@ -144,18 +130,18 @@ if __name__ == '__main__':
     parser.set_defaults(
             regions=[],
             secrets=None,
-            db=None,
             loglevel=logging.INFO,
             key_name=None,
             instance_data=None,
+            config=None,
             )
 
     parser.add_option("-r", "--region", action="append", dest="regions")
     parser.add_option("-k", "--secrets", dest="secrets")
     parser.add_option("-s", "--key-name", dest="key_name")
-    parser.add_option("--db", dest="db")
     parser.add_option("-v", "--verbose", action="store_const", dest="loglevel", const=logging.DEBUG)
     parser.add_option("-i", "--instance-data", dest="instance_data")
+    parser.add_option("-c", "--config", dest="config")
 
     options, args = parser.parse_args()
 
@@ -171,9 +157,10 @@ if __name__ == '__main__':
     if not options.instance_data:
         parser.error("instance data is required")
 
-    if not options.db:
-        parser.error("you must specify a database to use")
+    if not options.config:
+        parser.error("you must specify a config file to use")
 
+    config = json.load(open(options.config))
     secrets = json.load(open(options.secrets))
     instance_data = json.load(open(options.instance_data))
-    aws_watch_pending(options.db, options.regions, secrets, options.key_name, instance_data)
+    aws_watch_pending(config['db'], options.regions, secrets, options.key_name, instance_data, config['buildermap'])
