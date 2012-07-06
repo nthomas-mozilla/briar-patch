@@ -1,11 +1,14 @@
 {
   "buildslave_password": "pass",
   "buildbot_master": "10.12.48.14:9049",
+  "default_puppet_server": "puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com",
+  "puppetca": "puppetca-01.srv.releng.aws-us-west-1.mozilla.com",
   "hosts": {
-    "puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com": "10.130.104.67",
-    "puppetca-02.srv.releng.aws-us-west-1.mozilla.com": "10.130.75.122",
-    "puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com": "10.130.71.90",
-    "puppet": "10.130.247.78",
-    "puppetmaster-04.srv.releng.aws-us-west-1.mozilla.com": "10.130.247.78"
+    "puppetca-01.srv.releng.aws-us-west-1.mozilla.com": "10.130.76.110",
+    "puppet": "10.130.215.37",
+    "runtime-binaries.pvt.build.mozilla.org": "10.130.215.37",
+    "puppetmaster-01.srv.releng.aws-us-west-1.mozilla.com": "10.130.215.37",
+    "puppetmaster-02.srv.releng.aws-us-west-1.mozilla.com": "10.130.249.241",
+    "puppetmaster-03.srv.releng.aws-us-west-1.mozilla.com": "10.130.255.86"
   }
 }
