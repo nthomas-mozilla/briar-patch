@@ -19,13 +19,14 @@ def aws_instance_status(region, secrets, output_report=True):
     # ideas: figure out how long machines have been off for
 
     status = {}
-    template = {'running': [], 'stopped': []}
     conn = boto.ec2.connect_to_region(region, **secrets)
     reservations = conn.get_all_instances()
     for r in reservations:
         for i in r.instances:
             i_type = i.tags.get('moz-type', 'none set')
-            status.setdefault(i_type, template)[i.state].append(i.tags['Name'])
+            if i_type not in status:
+                status[i_type] = {'running': [], 'stopped': []}
+            status[i_type][i.state].append(i.tags['Name'])
             log.debug("Found %s of type %s, %s" %
                      (i.tags['Name'], i_type, i.state))
 
@@ -49,12 +50,12 @@ def aws_instance_status(region, secrets, output_report=True):
 def aws_volume_status(region, secrets, output_report=True):
     "look for currently running/stopped/terminated instances"
     status = {}
-    template = {'count': 0, 'total_size': 0}
     conn = boto.ec2.connect_to_region(region, **secrets)
     volumes = conn.get_all_volumes()
     for v in volumes:
         state = v.attachment_state()
-        status.setdefault(state, template)
+        if state not in status:
+            status[state] = {'count': 0, 'total_size': 0}
         status[state]['count'] += 1
         status[state]['total_size'] += v.size
         log.debug("Found %s of size %s, %s" %
@@ -62,10 +63,18 @@ def aws_volume_status(region, secrets, output_report=True):
 
     if output_report and status:
         line_format = "%-20s %10s %10s"
+        bar_line = '-' * len(line_format % ('', '', ''))
+        grand_total_count = 0
+        grand_total_size = 0
         print "\nVolumes report for %s:" % region
         print line_format % ("attachment state", "count", "size (GB)")
+        print bar_line
         for k,d in status.items():
             print line_format % (k, d['count'], d['total_size'])
+            grand_total_count += d['count']
+            grand_total_size  += d['total_size']
+        print bar_line
+        print line_format % ("Total", grand_total_count, grand_total_size)
 
     return status
 
