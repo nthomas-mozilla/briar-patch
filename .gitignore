@@ -3,6 +3,8 @@
 *.cfg
 *.pyc
 *.log
+secrets
+portal_secrets
 .DS_Store/
 .idea/
 build/
