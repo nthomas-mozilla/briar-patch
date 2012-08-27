@@ -25,29 +25,32 @@ def aws_instance_status(region, secrets, output_report=True):
         for i in r.instances:
             i_type = i.tags.get('moz-type', 'none set')
             if i_type not in status:
-                status[i_type] = {'running': [], 'stopped': [], 'terminated': [], 'pending': []}
-            status[i_type][i.state].append(i.tags['Name'])
+                status[i_type] = {'running': [], 'stopped': [], 'other': []}
+            # all the transient states get put into 'other'
+            if i.state in ('terminated', 'pending', 'stopping'):
+                state = 'other'
+            else:
+                state = i.state
+            status[i_type][state].append(i.tags['Name'])
             log.debug("Found %s of type %s, %s" %
                      (i.tags['Name'], i_type, i.state))
 
     if output_report and status:
-        line_format = "%-20s %12s %12s %12s %12s"
-        bar_line = '-' * len(line_format % ('', '', '', '', ''))
+        line_format = "%-20s %12s %12s %12s"
+        bar_line = '-' * len(line_format % ('', '', '', ''))
         running = 0
         stopped = 0
-        terminated = 0
-        pending = 0
+        other = 0
         print "\nInstance report for %s @ %s:" % (region, time.ctime())
-        print line_format % ("moz-type", "running", "stopped", "terminated", "pending")
+        print line_format % ("moz-type", "running", "stopped", "other")
         print bar_line
         for k,d in status.items():
-            print line_format % (k, len(d['running']), len(d['stopped']), len(d['terminated']),len(d['pending']))
+            print line_format % (k, len(d['running']), len(d['stopped']), len(d['other']))
             running += int(len(d['running']))
             stopped += int(len(d['stopped']))
-            terminated += int(len(d['terminated']))
-            pending += int(len(d['pending']))
+            other += int(len(d['other']))
         print bar_line
-        print line_format % ("Total", running, stopped, terminated, pending)
+        print line_format % ("Total", running, stopped, other)
 
     return status
 
