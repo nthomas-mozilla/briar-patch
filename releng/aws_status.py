@@ -13,6 +13,15 @@ import boto.ec2
 import logging
 log = logging.getLogger()
 
+def aws_total_instances(region, secrets, instanceType=None):
+    "look for instances (optional of instanceType) and count 'em up"
+    conn = boto.ec2.connect_to_region(region, **secrets)
+    reservations = conn.get_all_instances(filters={'instance-type': instanceType})
+    total = 0
+    for r in reservations:
+        total += len(r.instances)
+    return total
+
 def aws_instance_status(region, secrets, output_report=True):
     "look for currently running/stopped/terminated instances"
 
