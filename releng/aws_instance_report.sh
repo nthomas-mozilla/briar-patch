@@ -2,10 +2,10 @@
 
 PYTHON=~/virtualenvs/aws/bin/python
 
-# get last week's data
+# get 2 last week's data
 $PYTHON aws_retrieve_billing_data.py -k portal_secrets \
   -s AmazonEC2 -p hours \
-  `date +'%Y-%m-%d' -d '7 days ago'` \
+  `date +'%Y-%m-%d' -d '14 days ago'` \
   `date +'%Y-%m-%d' -d 'tomorrow'`  > usage-reports/last-week-EC2.csv
 grep 'RunInstances,USW1-BoxUsage:c1.xlarge' usage-reports/last-week-EC2.csv > usage-reports/last-week-EC2-run_c1.xlarge.csv
 
