@@ -20,7 +20,7 @@ username = secrets['portal_username']
 password = secrets['portal_password']
 
 counts = {}
-if False:
+if True:
     response = get_report('AmazonEC2', startWindow, endWindow + datetime.timedelta(days=1),
                           username, password, format='csv', period='hours')
     f = open('usage-reports/instance-run_c1.xlarge.csv','w')
@@ -29,6 +29,8 @@ if False:
             f.write(d)
     f.close()
 
+# this returns numpy.array's
+# any 0 instance hours are ommitted by Amazon in the log, so our hist is off for that
 times, raw_counts = np.loadtxt("usage-reports/instance-run_c1.xlarge.csv",
         unpack=True, delimiter=',', usecols=(4,6),
         converters={ 4: mdates.strpdate2num('%m/%d/%y %H:%M:%S')})
@@ -39,11 +41,6 @@ times, raw_counts = np.loadtxt("usage-reports/instance-run_c1.xlarge.csv",
 counts = np.zeros(max(raw_counts)+1)
 for r in raw_counts:
    counts[r] += 1
-
-#print "raw_counts: %s" % raw_counts
-#print "counts:"
-#for i in range(0,len(counts)):
-#  print "%3.0f  %3.0f" % (i, counts[i])
 
 ##############################################################################################
 # do billing calculation
@@ -56,38 +53,96 @@ for r in raw_counts:
 # we get charged 0.72 for on demand now but pricing page says 0.744
 # we neglect other components like IOps and transfer
 
-ondemand_instance = 0.72    # $/hour
-reserved_instance = 0.22    # $/hour
-reserved_fee      = 3100    # $ 
-reserved_term     = 36      # months
-# see also $2000 for 1yr + $0.25/hour
-# see also $3100 for 3yr + $0.22/hour
-
 one_month         = 365.25/12 * 24 # hours / month
 
-# list of results, index is # of reserved instances
+def calculate_pricing(usage, pricing, reserved_range, textReport=True):
+    prices = []
+
+    for r_count in reserved_range:
+        r_price = pricing['upfront']/pricing['term'] * r_count
+        if pricing.get('always_hourly', False):
+            r_price += pricing['hourly'] * one_month * r_count
+        else:
+            for i in range(0,r_count+1):
+                r_price += pricing['hourly'] * i * counts[i]
+        for i in range(r_count+1, len(counts)):
+            r_price += ondemand_instance_hourly * (i - r_count) * counts[i]
+        prices.append(r_price)
+
+    if textReport:
+        reserved_best = prices.index(min(prices))
+        if reserved_best == 0:
+            print "%15s: cheaper to use ondemand" % pricing['name']
+        else:
+            saving_month = prices[0] - prices[reserved_best]
+            if pricing.get('always_hourly', False):
+                fixed_month = pricing['hourly'] * one_month * reserved_best
+            else:
+                fixed_month = 0
+            print "%15s: best saving at %2s instances - $%6.0f upfront, $%8.2f fixed/month, $%8.2f saved/month, $%7.0f over term" % (
+                pricing['name'], reserved_best, reserved_best * pricing['upfront'],
+                fixed_month, saving_month, pricing['term'] * saving_month)
+        #for i in range(0,len(prices)):
+        #    print "%5s %-8.2f" % (i, prices[i])
+
+    return prices
+
+ondemand_instance_hourly = 0.72    # $/hour
+reserved_pricing = [
+    {
+        'name': 'light-1yr',
+        'upfront': 712,  # $
+        'hourly': 0.50,  # $/hour
+        'term': 12,      # months
+    },
+    {
+        'name': 'light-3yr',
+        'upfront': 1092, # $
+        'hourly': 0.44,  # $/hour
+        'term' : 36,     # months
+    },
+    {
+        'name': 'medium-1yr',
+        'upfront': 1660, # $
+        'hourly': 0.32,  # $/hour
+        'term': 12,      # months
+     },
+    {
+        'name': 'medium-3yr',
+        'upfront': 2552, # $
+        'hourly': 0.28,  # $/hour
+        'term': 36,      # months
+     },
+    {
+        'name': 'high-1yr',
+        'upfront': 2000, # $
+        'hourly': 0.25,  # $/hour
+        'term': 12,      # months
+        'always_hourly': True,    # High Utilisation charges all hours reqardless of use
+     },
+    {
+        'name': 'high-3yr',
+        'upfront': 3100, # $
+        'hourly': 0.22,  # $/hour
+        'term': 36,      # months
+        'always_hourly': True,    # High Utilisation charges all hours reqardless of use
+     },
+]
+
+# must include 0 to correctly calculate savings
+reserved_range = range(0, min(len(counts), 31))
+print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % ('ondemand',
+            calculate_pricing(counts, {'name': 'ondemand', 'hourly': ondemand_instance_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
+            max(reserved_range))
+
 prices = []
-
-reserved_range = range(0,31)
-
-for r_count in reserved_range:
-    r_price = (reserved_fee/reserved_term + \
-               reserved_instance * one_month) * r_count
-    for i in range(r_count+1, len(counts)):
-        r_price += ondemand_instance * (i - r_count) * counts[i]
-    prices.append(r_price)
-
-print "prices:"
-for i in reserved_range:
-  print "%3.0f  %10.2f" % (i, prices[i])
-
-reserved_best = prices.index(min(prices))
-saving_month = prices[0] - prices[reserved_best]
-print "\nCheapest cost / month - %1.0f instances" % reserved_best
-print " - upfront cost (%s month term): $%1.2f" % (reserved_term, reserved_best * reserved_fee) 
-print " - fixed monthly cost: $%1.2f" % (reserved_instance * one_month * reserved_best)
-print " - estimated savings per month: $%1.2f" % (saving_month)
-print " - estimated savings over %s month term: $%1.2f" % (reserved_term, reserved_term * saving_month)
+for p in reserved_pricing:
+    prices.append(
+        {
+            'name': p['name'],
+            'pricing': calculate_pricing(counts, p, reserved_range),
+        }
+    )
 
 ##############################################################################################
 # create a plot for last month
@@ -112,7 +167,7 @@ ax = fig.gca()
 plt.hist(raw_counts, range(0,81), color= 'r', align='left')
 plt.xlabel('Instances used per hour')
 plt.ylabel('Frequency')
-plt.title('Instance Usage between %s and %s' % (startWindow, endWindow))
+plt.title('Instance usage in the %s from %s' % (endWindow - startWindow, endWindow))
 plt.grid(True)
 
 plt.savefig('usage-reports/instance_histogram.png')
@@ -123,10 +178,13 @@ plt.savefig('usage-reports/instance_histogram.png')
 fig = plt.figure()
 ax = fig.gca()
 
-plt.plot(reserved_range, prices, 'r.-')
+for p in prices:
+  plt.plot(reserved_range, p['pricing'], 'x-', label=p['name'])
 plt.xlabel('Number of reserved instances')
 plt.ylabel('Monthly cost')
+plt.title('Reserved instance cost calculation')
 plt.grid(True)
+plt.legend()
 
 plt.savefig('usage-reports/instance_costing.png')
 
