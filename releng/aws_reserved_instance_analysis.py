@@ -5,22 +5,16 @@ import pytz
 import datetime
 import json
 
-california = pytz.timezone('US/Pacific')
-utc = pytz.utc
-
-endWindow = datetime.datetime.now(tz=utc).replace(minute=0, second=0, microsecond=0)
-startWindow = endWindow - datetime.timedelta(days=31)
-
-##############################################################################################
 # read the data from Amazon billing
-from aws_retrieve_billing_data import get_report
+def retrieve_usage_data(startWindow, endWindow):
+    from aws_retrieve_billing_data import get_report
 
-secrets = json.load(open('portal_secrets'))
-username = secrets['portal_username']
-password = secrets['portal_password']
+    secrets = json.load(open('portal_secrets'))
+    username = secrets['portal_username']
+    password = secrets['portal_password']
 
-counts = {}
-if True:
+    counts = {}
+
     response = get_report('AmazonEC2', startWindow, endWindow + datetime.timedelta(days=1),
                           username, password, format='csv', period='hours')
     f = open('usage-reports/instance-run_c1.xlarge.csv','w')
@@ -29,34 +23,10 @@ if True:
             f.write(d)
     f.close()
 
-# this returns numpy.array's
-# any 0 instance hours are ommitted by Amazon in the log, so our hist is off for that
-times, raw_counts = np.loadtxt("usage-reports/instance-run_c1.xlarge.csv",
-        unpack=True, delimiter=',', usecols=(4,6),
-        converters={ 4: mdates.strpdate2num('%m/%d/%y %H:%M:%S')})
-
-##############################################################################################
-# convert to a list where the index is the instance usage, value is frequency
-# diy histogram
-counts = np.zeros(max(raw_counts)+1)
-for r in raw_counts:
-   counts[r] += 1
-
-##############################################################################################
-# do billing calculation
-
-# pricing for Linux 'Heavy Utilization Reserved Instances' of type
-#                   'High-CPU On-Demand Instances' (aka c1.xlarge) in 
-#                   'US West (Northen California)' (aka USW1)
-# NB, Heavy Utilisation Reserved Instances are always charged the hourly fee
-#   see http://aws.amazon.com/ec2/reserved-instances/#5
-# we get charged 0.72 for on demand now but pricing page says 0.744
-# we neglect other components like IOps and transfer
-
-one_month         = 365.25/12 * 24 # hours / month
-
+# generalised billing model
 def calculate_pricing(usage, pricing, reserved_range, textReport=True):
     prices = []
+    one_month         = 365.25/12 * 24 # hours / month
 
     for r_count in reserved_range:
         r_price = pricing['upfront']/pricing['term'] * r_count
@@ -86,6 +56,15 @@ def calculate_pricing(usage, pricing, reserved_range, textReport=True):
         #    print "%5s %-8.2f" % (i, prices[i])
 
     return prices
+
+
+# pricing for Linux '* Utilization Reserved Instances' of type
+#                   'High-CPU On-Demand Instances' (aka c1.xlarge) in
+#                   'US West (Northen California)' (aka USW1)
+# NB, Heavy Utilisation Reserved Instances are always charged the hourly fee
+#   see http://aws.amazon.com/ec2/reserved-instances/#5
+# we get charged 0.72 for on demand now but pricing page says 0.744, ok!
+# we neglect other components like IOps and transfer since instance are our biggest cost
 
 ondemand_instance_hourly = 0.72    # $/hour
 reserved_pricing = [
@@ -129,62 +108,91 @@ reserved_pricing = [
      },
 ]
 
-# must include 0 to correctly calculate savings
-reserved_range = range(0, min(len(counts), 31))
-print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % ('ondemand',
-            calculate_pricing(counts, {'name': 'ondemand', 'hourly': ondemand_instance_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
-            max(reserved_range))
 
-prices = []
-for p in reserved_pricing:
-    prices.append(
-        {
-            'name': p['name'],
-            'pricing': calculate_pricing(counts, p, reserved_range),
-        }
-    )
+if __name__ == '__main__':
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option("-n", "--no-retrieve", dest="retrieve_data", action="store_false",
+                      help="Don't ask Amazon for billing data", default=True)
+    options, args = parser.parse_args()
 
-##############################################################################################
-# create a plot for last month
-fig = plt.figure()
-ax = fig.gca()
-ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d\n%H%M', tz=california))
+    california = pytz.timezone('US/Pacific')
+    utc = pytz.utc
 
-width=1.0/24
-plt.bar(times, raw_counts, width=width, color='c', align='center', label='Amazon Billing', linewidth=0)
-plt.xlabel('Pacific time')
-plt.ylabel('Instances Used')
-plt.grid(True)
-ax.set_xlim((startWindow, endWindow))
+    endWindow = datetime.datetime.now(tz=utc).replace(minute=0, second=0, microsecond=0)
+    startWindow = endWindow - datetime.timedelta(days=31)
 
-plt.savefig('usage-reports/instance_month.png')
+    if options.retrieve_data:
+        retrieve_usage_data(startWindow, endWindow)
 
-##############################################################################################
-# create a histogram plot for instance usage
-fig = plt.figure()
-ax = fig.gca()
+    # load data, this returns numpy.array's
+    # any 0 instance hours are ommitted by Amazon in the log, so our hist is off for that
+    times, raw_counts = np.loadtxt("usage-reports/instance-run_c1.xlarge.csv",
+            unpack=True, delimiter=',', usecols=(4,6),
+            converters={ 4: mdates.strpdate2num('%m/%d/%y %H:%M:%S')})
 
-plt.hist(raw_counts, range(0,81), color= 'r', align='left')
-plt.xlabel('Instances used per hour')
-plt.ylabel('Frequency')
-plt.title('Instance usage in the %s from %s' % (endWindow - startWindow, endWindow))
-plt.grid(True)
+    # convert to a list where the index is the instance usage, value is frequency
+    # diy histogram
+    counts = np.zeros(max(raw_counts)+1)
+    for r in raw_counts:
+       counts[r] += 1
 
-plt.savefig('usage-reports/instance_histogram.png')
+    # our range of interest for reserved slaves
+    # must include 0 to correctly calculate savings
+    reserved_range = range(0, min(len(counts), 31))
+    print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % ('ondemand',
+                calculate_pricing(counts, {'name': 'ondemand', 'hourly': ondemand_instance_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
+                max(reserved_range))
 
-##############################################################################################
-# create a plot for reserved instance_pricing
+    # calculate the costs
+    prices = []
+    for p in reserved_pricing:
+        prices.append(
+            {
+                'name': p['name'],
+                'pricing': calculate_pricing(counts, p, reserved_range),
+            }
+        )
 
-fig = plt.figure()
-ax = fig.gca()
+    # create a plot for last month
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d\n%H%M', tz=california))
 
-for p in prices:
-  plt.plot(reserved_range, p['pricing'], 'x-', label=p['name'])
-plt.xlabel('Number of reserved instances')
-plt.ylabel('Monthly cost')
-plt.title('Reserved instance cost calculation')
-plt.grid(True)
-plt.legend()
+    width=1.0/24
+    plt.bar(times, raw_counts, width=width, color='c', align='center', label='Amazon Billing', linewidth=0)
+    plt.xlabel('Pacific time')
+    plt.ylabel('Instances Used')
+    plt.grid(True)
+    ax.set_xlim((startWindow, endWindow))
 
-plt.savefig('usage-reports/instance_costing.png')
+    plt.savefig('usage-reports/instance_month.png')
+
+    # create a histogram plot for instance usage
+    fig = plt.figure()
+    ax = fig.gca()
+
+    plt.hist(raw_counts, range(0,81), color= 'r', align='left')
+    plt.xlabel('Instances used per hour')
+    plt.ylabel('Frequency')
+    plt.title('Instance usage in the %s from %s' % (endWindow - startWindow, endWindow))
+    plt.grid(True)
+
+    plt.savefig('usage-reports/instance_histogram.png')
+
+    ##############################################################################################
+    # create a plot for reserved instance_pricing
+
+    fig = plt.figure()
+    ax = fig.gca()
+
+    for p in prices:
+      plt.plot(reserved_range, p['pricing'], 'x-', label=p['name'])
+    plt.xlabel('Number of reserved instances')
+    plt.ylabel('Monthly cost')
+    plt.title('Reserved instance cost calculation')
+    plt.grid(True)
+    plt.legend()
+
+    plt.savefig('usage-reports/instance_costing.png')
 
