@@ -24,36 +24,36 @@ def retrieve_usage_data(startWindow, endWindow):
     f.close()
 
 # generalised billing model
-def calculate_pricing(usage, pricing, reserved_range, textReport=True):
-    prices = []
-    one_month         = 365.25/12 * 24 # hours / month
+def calculate_pricing(usage, ondemand_hourly, res_pricing, res_range, textReport=False):
+    one_month = 365.25/12 * 24 # hours / month
 
-    for r_count in reserved_range:
-        r_price = pricing['upfront']/pricing['term'] * r_count
-        if pricing.get('always_hourly', False):
-            r_price += pricing['hourly'] * one_month * r_count
+    prices = []
+    for res_count in res_range:
+        # reserved intances
+        price = res_pricing['upfront']/res_pricing['term'] * res_count
+        if res_pricing.get('always_hourly', False):
+            price += res_pricing['hourly'] * one_month * res_count
         else:
-            for i in range(0,r_count+1):
-                r_price += pricing['hourly'] * i * counts[i]
-        for i in range(r_count+1, len(counts)):
-            r_price += ondemand_instance_hourly * (i - r_count) * counts[i]
-        prices.append(r_price)
+            for instance_count in range(0,res_count+1):
+                price += res_pricing['hourly'] * instance_count * usage[instance_count]
+        # residual usage at ondeman
+        for instance_count in range(res_count+1, len(usage)):
+            price += ondemand_hourly * (instance_count - res_count) * usage[instance_count]
+        prices.append(price)
 
     if textReport:
-        reserved_best = prices.index(min(prices))
-        if reserved_best == 0:
-            print "%15s: cheaper to use ondemand" % pricing['name']
+        res_best = prices.index(min(prices))
+        if res_best == 0:
+            print "%15s: cheaper to use ondemand" % res_pricing['name']
         else:
-            saving_month = prices[0] - prices[reserved_best]
-            if pricing.get('always_hourly', False):
-                fixed_month = pricing['hourly'] * one_month * reserved_best
+            saving_month = prices[0] - prices[res_best]
+            if res_pricing.get('always_hourly', False):
+                fixed_month = res_pricing['hourly'] * one_month * res_best
             else:
                 fixed_month = 0
             print "%15s: best saving at %2s instances - $%6.0f upfront, $%8.2f fixed/month, $%8.2f saved/month, $%7.0f over term" % (
-                pricing['name'], reserved_best, reserved_best * pricing['upfront'],
-                fixed_month, saving_month, pricing['term'] * saving_month)
-        #for i in range(0,len(prices)):
-        #    print "%5s %-8.2f" % (i, prices[i])
+                res_pricing['name'], res_best, res_best * res_pricing['upfront'],
+                fixed_month, saving_month, res_pricing['term'] * saving_month)
 
     return prices
 
@@ -66,42 +66,42 @@ def calculate_pricing(usage, pricing, reserved_range, textReport=True):
 # we get charged 0.72 for on demand now but pricing page says 0.744, ok!
 # we neglect other components like IOps and transfer since instance are our biggest cost
 
-ondemand_instance_hourly = 0.72    # $/hour
+ondemand_hourly = 0.72    # $/hour
 reserved_pricing = [
     {
         'name': 'light-1yr',
-        'upfront': 712,  # $
+        'upfront': 712.,  # $
         'hourly': 0.50,  # $/hour
         'term': 12,      # months
     },
     {
         'name': 'light-3yr',
-        'upfront': 1092, # $
+        'upfront': 1092., # $
         'hourly': 0.44,  # $/hour
         'term' : 36,     # months
     },
     {
         'name': 'medium-1yr',
-        'upfront': 1660, # $
+        'upfront': 1660., # $
         'hourly': 0.32,  # $/hour
         'term': 12,      # months
      },
     {
         'name': 'medium-3yr',
-        'upfront': 2552, # $
+        'upfront': 2552., # $
         'hourly': 0.28,  # $/hour
         'term': 36,      # months
      },
     {
         'name': 'high-1yr',
-        'upfront': 2000, # $
+        'upfront': 2000., # $
         'hourly': 0.25,  # $/hour
         'term': 12,      # months
         'always_hourly': True,    # High Utilisation charges all hours reqardless of use
      },
     {
         'name': 'high-3yr',
-        'upfront': 3100, # $
+        'upfront': 3100., # $
         'hourly': 0.22,  # $/hour
         'term': 36,      # months
         'always_hourly': True,    # High Utilisation charges all hours reqardless of use
@@ -141,7 +141,7 @@ if __name__ == '__main__':
     # must include 0 to correctly calculate savings
     reserved_range = range(0, min(len(counts), 31))
     print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % ('ondemand',
-                calculate_pricing(counts, {'name': 'ondemand', 'hourly': ondemand_instance_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
+                calculate_pricing(counts, ondemand_hourly, {'name': 'ondemand', 'hourly': ondemand_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
                 max(reserved_range))
 
     # calculate the costs
@@ -150,7 +150,8 @@ if __name__ == '__main__':
         prices.append(
             {
                 'name': p['name'],
-                'pricing': calculate_pricing(counts, p, reserved_range),
+                'pricing': calculate_pricing(counts, ondemand_hourly, p,
+                                             reserved_range, textReport=True),
             }
         )
 
