@@ -1,4 +1,3 @@
-import csv
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -9,7 +8,7 @@ import json
 california = pytz.timezone('US/Pacific')
 utc = pytz.utc
 
-endWindow = datetime.datetime.now(tz=utc).replace(minute=0, second=0) - datetime.timedelta(days=0)
+endWindow = datetime.datetime.now(tz=utc).replace(minute=0, second=0)
 startWindow = endWindow - datetime.timedelta(days=14)
 
 ##############################################################################################
