@@ -158,6 +158,8 @@ if __name__ == '__main__':
     for r in raw_counts:
        counts[r] += 1
 
+    # insert any distribution hacks here
+
     # our range of interest for reserved slaves
     # must include 0 to correctly calculate savings
     reserved_range = range(0, min(len(counts), options.max_reserved+1))
@@ -199,7 +201,7 @@ if __name__ == '__main__':
     plt.bar(np.arange(0,len(counts)), counts, color= 'r', align='center')
     plt.xlabel('Instances used per hour')
     plt.ylabel('Frequency')
-    plt.title('Instance usage in the %s from %s' % (endWindow - startWindow, endWindow))
+    plt.title('Instance usage in the %s\nfrom %s' % (endWindow - startWindow, endWindow))
     plt.grid(True)
     plt.xlim((0,plt.xlim()[1]))
 
@@ -215,7 +217,7 @@ if __name__ == '__main__':
     plt.ylabel('Monthly cost')
     plt.title('Reserved instance cost calculation')
     plt.grid(True)
-    plt.legend()
+    plt.legend(ncol=3, prop={'size': 'small'})
 
     plt.savefig('usage-reports/instance_costing.png')
 
@@ -242,6 +244,6 @@ if __name__ == '__main__':
     plt.xticks(ind+width, names, rotation=25, size='x-small')
     plt.ylabel('Total Cost, USD')
     plt.title('Total costs over %s months' % maxterm)
-    plt.legend(ncol=2, prop={'size': 'x-small'})
+    plt.legend(ncol=2, prop={'size': 'small'})
 
     plt.savefig('usage-reports/total_costing.png')
