@@ -45,23 +45,25 @@ def calculate_pricing(usage, ondemand_hourly, res_pricing, res_count,
         ondemand += ondemand_hourly * (instance_count - res_count) * usage[instance_count]
 
     total =  res_upfront_spread + res_fixed + res_hourly + ondemand
-    price_parts = [total, res_upfront_spread, res_fixed, res_hourly, ondemand]
+    price_parts = np.array([total, res_upfront_spread, res_fixed, res_hourly, ondemand])
     if perTerm:
-        price_parts = [p * res_pricing['term'] for p in price_parts]
+        price_parts = price_parts * res_pricing['term']
 
     return price_parts
 
-# loop over a range of possible reserved instances to find the lowest cost
 def minimize_pricing(usage, ondemand_hourly, res_pricing, res_range, textReport=False):
+    # loop over a range of possible reserved instances to find the lowest cost
+    # return a list of total costs, and the reserved instance count to minimize
 
     prices = []
     for res_count in res_range:
         prices.append(calculate_pricing(usage, ondemand_hourly, res_pricing, res_count)[0])
 
+    # assume a global minimum, might fall over if the distribution shape is odd
+    res_best = prices.index(min(prices))
+    best_pricing = calculate_pricing(usage, ondemand_hourly, res_pricing, res_best)
+
     if textReport:
-        # assume a global minimum, might fall over if the distribution shape is odd
-        res_best = prices.index(min(prices))
-        best_pricing = calculate_pricing(usage, ondemand_hourly, res_pricing, res_best)
         if res_best == 0:
             print "%15s: cheaper to use ondemand" % res_pricing['name']
         else:
@@ -70,7 +72,7 @@ def minimize_pricing(usage, ondemand_hourly, res_pricing, res_range, textReport=
                 res_pricing['name'], res_best, best_pricing[1],
                 best_pricing[2], saving_month, res_pricing['term'] * saving_month)
 
-    return prices
+    return prices, res_best, best_pricing
 
 
 # pricing for Linux '* Utilization Reserved Instances' of type
@@ -130,6 +132,9 @@ if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option("-n", "--no-retrieve", dest="retrieve_data", action="store_false",
                       help="Don't ask Amazon for billing data", default=True)
+    parser.add_option("-m", "--max-reserved", dest="max_reserved", action="store",
+                      type="int", default=30,
+                      help="Maximum number of instances to consider reserving")
     options, args = parser.parse_args()
 
     california = pytz.timezone('US/Pacific')
@@ -155,21 +160,24 @@ if __name__ == '__main__':
 
     # our range of interest for reserved slaves
     # must include 0 to correctly calculate savings
-    reserved_range = range(0, min(len(counts), 31))
-    print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % ('ondemand',
-                minimize_pricing(counts, ondemand_hourly, {'name': 'ondemand', 'hourly': ondemand_hourly, 'term': 1, 'upfront': 0}, [0], textReport=False)[0],
-                max(reserved_range))
+    reserved_range = range(0, min(len(counts), options.max_reserved+1))
+
+    price_ondemand = calculate_pricing(counts, ondemand_hourly,
+                                      {'name': 'ondemand',
+                                       'hourly': ondemand_hourly,
+                                        'term': 1,
+                                        'upfront': 0},
+                                       0)
+    print "%15s: $%1.2f/month, considering up to %s reserved instances ..." % \
+        ('ondemand', price_ondemand[0], max(reserved_range))
 
     # calculate the costs
-    prices = []
     for p in reserved_pricing:
-        prices.append(
-            {
-                'name': p['name'],
-                'pricing': minimize_pricing(counts, ondemand_hourly, p,
-                                             reserved_range, textReport=True),
-            }
-        )
+        r1, r2, r3 = minimize_pricing(counts, ondemand_hourly, p, reserved_range,
+                                      textReport=True)
+        p['pricing_trend'] = r1
+        p['best_count'] = r2
+        p['best_pricing'] = r3
 
     # create a plot for last month
     fig = plt.figure()
@@ -187,7 +195,6 @@ if __name__ == '__main__':
 
     # create a histogram plot for instance usage
     fig = plt.figure()
-    ax = fig.gca()
 
     plt.hist(raw_counts, range(0,81), color= 'r', align='left')
     plt.xlabel('Instances used per hour')
@@ -197,14 +204,12 @@ if __name__ == '__main__':
 
     plt.savefig('usage-reports/instance_histogram.png')
 
-    ##############################################################################################
-    # create a plot for reserved instance_pricing
-
+    # create a plot for reserved instance pricing trend
     fig = plt.figure()
     ax = fig.gca()
 
-    for p in prices:
-      plt.plot(reserved_range, p['pricing'], 'x-', label=p['name'])
+    for p in reserved_pricing:
+      plt.plot(reserved_range, p['pricing_trend'], 'x-', label=p['name'])
     plt.xlabel('Number of reserved instances')
     plt.ylabel('Monthly cost')
     plt.title('Reserved instance cost calculation')
@@ -213,3 +218,29 @@ if __name__ == '__main__':
 
     plt.savefig('usage-reports/instance_costing.png')
 
+    # create a bar plot showing total components for each pricing, over the longest term
+    fig = plt.figure()
+    ax = fig.gca()
+
+    maxterm = max([p['term'] for p in reserved_pricing])
+    # to format the data for plotting we make a 2D array
+    # each row a set of pricing components, leaving off the total
+    p_data = np.zeros(shape=(1+len(reserved_pricing), 4))
+    names = ['ondemand']
+    p_data[0,:] = price_ondemand[1:] * maxterm
+    for i in range(0,len(reserved_pricing)):
+        p = reserved_pricing[i]
+        names.append('%s x %s' % (p['best_count'], p['name']))
+        p_data[i+1,:] = p['best_pricing'][1:] * maxterm
+    labels = ['Upfront', 'Fixed', 'Hourly - Reserved', 'Hourly - Ondemand']
+    colors = ['r', 'b', 'g' ,'#CCCCCC']
+    ind = np.arange(0, 1+len(reserved_pricing))
+    width = 0.8
+    for i in range(0,4):
+        plt.bar(ind+width/2, p_data[:,i], bottom=p_data[:,0:i].sum(axis=1), color=colors[i], label=labels[i])
+    plt.xticks(ind+width, names, rotation=25, size='x-small')
+    plt.ylabel('Total Cost, USD')
+    plt.title('Total costs over %s months' % maxterm)
+    plt.legend(ncol=2, prop={'size': 'x-small'})
+
+    plt.savefig('usage-reports/total_costing.png')
