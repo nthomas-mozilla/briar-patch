@@ -196,11 +196,12 @@ if __name__ == '__main__':
     # create a histogram plot for instance usage
     fig = plt.figure()
 
-    plt.hist(raw_counts, range(0,81), color= 'r', align='left')
+    plt.bar(np.arange(0,len(counts)), counts, color= 'r', align='center')
     plt.xlabel('Instances used per hour')
     plt.ylabel('Frequency')
     plt.title('Instance usage in the %s from %s' % (endWindow - startWindow, endWindow))
     plt.grid(True)
+    plt.xlim((0,plt.xlim()[1]))
 
     plt.savefig('usage-reports/instance_histogram.png')
 
