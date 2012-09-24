@@ -182,7 +182,9 @@ if __name__ == '__main__':
         p['best_pricing'] = r3
 
     # create a plot for last month
-    fig = plt.figure()
+    fig = plt.figure(figsize=(12,9))
+    plt.subplots_adjust(left=0.075, right=0.975, bottom=0.075, top=0.925, hspace=0.25)
+    plt.subplot(221)
     ax = fig.gca()
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d\n%H%M', tz=california))
 
@@ -194,23 +196,19 @@ if __name__ == '__main__':
     plt.grid(True)
     ax.set_xlim((startWindow, endWindow))
 
-    plt.savefig('usage-reports/instance_month.png')
-
     # create a histogram plot for instance usage
-    fig = plt.figure()
+    plt.subplot(222)
 
-    plt.bar(np.arange(0,len(counts)), counts, color= 'r', align='center')
+    plt.bar(np.arange(0,len(counts)), counts, color= 'r', align='center',
+            linewidth=0, width=1)
     plt.xlabel('Instances used per hour')
     plt.ylabel('Frequency')
     plt.title('Instance usage in the %s\nfrom %s' % (endWindow - startWindow, endWindow))
     plt.grid(True)
     plt.xlim((0,plt.xlim()[1]))
 
-    plt.savefig('usage-reports/instance_histogram.png')
-
     # create a plot for reserved instance pricing trend
-    fig = plt.figure()
-    ax = fig.gca()
+    plt.subplot(223)
 
     for p in reserved_pricing:
       plt.plot(reserved_range, p['pricing_trend'], 'x-', label=p['name'])
@@ -218,24 +216,23 @@ if __name__ == '__main__':
     plt.ylabel('Monthly cost')
     plt.title('Reserved instance cost calculation')
     plt.grid(True)
-    plt.legend(ncol=3, prop={'size': 'small'})
-
-    plt.savefig('usage-reports/instance_costing.png')
+    plt.legend(ncol=3, loc=4, prop={'size': 'x-small'})
+    yl = plt.ylim()
+    plt.ylim((0,yl[1]))
 
     # create a bar plot showing total components for each pricing, over the longest term
-    fig = plt.figure()
-    ax = fig.gca()
+    plt.subplot(224)
 
     maxterm = max([p['term'] for p in reserved_pricing])
     # to format the data for plotting we make a 2D array
     # each row a set of pricing components, leaving off the total
     p_data = np.zeros(shape=(1+len(reserved_pricing), 4))
     names = ['ondemand']
-    p_data[0,:] = price_ondemand[1:] * maxterm
+    p_data[0,:] = price_ondemand[1:] * maxterm / 1e3
     for i in range(0,len(reserved_pricing)):
         p = reserved_pricing[i]
         names.append('%s x\n%s' % (p['best_count'], p['name']))
-        p_data[i+1,:] = p['best_pricing'][1:] * maxterm
+        p_data[i+1,:] = p['best_pricing'][1:] * maxterm / 1e3
     labels = ['Upfront', 'High Util. Fixed', 'Hourly - Reserved', 'Hourly - Ondemand']
     colors = ['r', 'b', 'g' ,'#CCCCCC']
     ind = np.arange(0, 1+len(reserved_pricing))
@@ -247,12 +244,12 @@ if __name__ == '__main__':
         for j,v in enumerate(p_data[:,i]):
             if v > 0:
                 plt.text(j, v/2 + p_data[j,0:i].sum(),
-                         '$%1.0fK' % round(v/1e3), fontsize=8,
-		         horizontalalignment='center', verticalalignment='center',
-		         bbox=dict(facecolor='white', alpha=0.75))
-    plt.xticks(ind, names, rotation=25, size='x-small')
-    plt.ylabel('Projected cost Cost, USD')
+                         '$%1.0fK' % round(v), fontsize=8,
+                         horizontalalignment='center', verticalalignment='center',
+                         bbox=dict(facecolor='white', alpha=0.75))
+    plt.xticks(ind, names, rotation=15, size='x-small')
+    plt.ylabel('Projected cost, USD$000')
     plt.title('Projected total costs over %s months' % maxterm)
-    plt.legend(ncol=2, prop={'size': 'small'})
+    plt.legend(ncol=2, prop={'size': 'x-small'})
 
-    plt.savefig('usage-reports/total_costing.png')
+    plt.savefig('usage-reports/combined_reserved_analysis.png')
