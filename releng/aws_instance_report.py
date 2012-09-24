@@ -107,7 +107,7 @@ plt.grid(True)
 
 xpadding = datetime.timedelta(minutes=30)
 ypadding = 5
-maxInstance = 80
+maxInstance = 140
 ax.set_ylim((0, maxInstance+ypadding))
 ax.set_xlim((endWindow-datetime.timedelta(days=2)-xpadding, endWindow+xpadding))
 

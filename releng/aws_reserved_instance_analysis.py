@@ -190,6 +190,7 @@ if __name__ == '__main__':
     plt.bar(times, raw_counts, width=width, color='c', align='center', label='Amazon Billing', linewidth=0)
     plt.xlabel('Pacific time')
     plt.ylabel('Instances Used')
+    plt.title('Amazon billing data for instances used')
     plt.grid(True)
     ax.set_xlim((startWindow, endWindow))
 
@@ -233,17 +234,25 @@ if __name__ == '__main__':
     p_data[0,:] = price_ondemand[1:] * maxterm
     for i in range(0,len(reserved_pricing)):
         p = reserved_pricing[i]
-        names.append('%s x %s' % (p['best_count'], p['name']))
+        names.append('%s x\n%s' % (p['best_count'], p['name']))
         p_data[i+1,:] = p['best_pricing'][1:] * maxterm
-    labels = ['Upfront', 'Fixed', 'Hourly - Reserved', 'Hourly - Ondemand']
+    labels = ['Upfront', 'High Util. Fixed', 'Hourly - Reserved', 'Hourly - Ondemand']
     colors = ['r', 'b', 'g' ,'#CCCCCC']
     ind = np.arange(0, 1+len(reserved_pricing))
     width = 0.8
     for i in range(0,4):
-        plt.bar(ind+width/2, p_data[:,i], bottom=p_data[:,0:i].sum(axis=1), color=colors[i], label=labels[i])
-    plt.xticks(ind+width, names, rotation=25, size='x-small')
-    plt.ylabel('Total Cost, USD')
-    plt.title('Total costs over %s months' % maxterm)
+        plt.bar(ind, p_data[:,i], bottom=p_data[:,0:i].sum(axis=1),
+                width=width, color=colors[i], label=labels[i],
+                align='center')
+        for j,v in enumerate(p_data[:,i]):
+            if v > 0:
+                plt.text(j, v/2 + p_data[j,0:i].sum(),
+                         '$%1.0fK' % round(v/1e3), fontsize=8,
+		         horizontalalignment='center', verticalalignment='center',
+		         bbox=dict(facecolor='white', alpha=0.75))
+    plt.xticks(ind, names, rotation=25, size='x-small')
+    plt.ylabel('Projected cost Cost, USD')
+    plt.title('Projected total costs over %s months' % maxterm)
     plt.legend(ncol=2, prop={'size': 'small'})
 
     plt.savefig('usage-reports/total_costing.png')
